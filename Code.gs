@@ -1,8 +1,8 @@
 /**
  * Audit of Quinyx shifts. Produces one Google Sheet with two tabs:
  *  1. "No break 6h+": shifts of 6 hours or longer without a break.
- *  2. "Break not 15 min": all shifts (any length) whose total break is not 15 minutes,
- *     colour coded (red = no break, orange = longer than expected, yellow = shorter than expected).
+ *  2. "Break not 15 min": all shifts (any length) with a break whose total is not 15 minutes
+ *     (shifts with 0 break are excluded here; they only show up in tab 1 if they are 6h+).
  *
  * Setup:
  *  1. Project Settings > Script Properties: set QUINYX_API_KEY.
@@ -11,7 +11,7 @@
  */
 const CONFIG = {
   ENDPOINT: 'https://api.quinyx.com/FlexForceWebServices.php',
-  EXPECTED_BREAK_MINUTES: 15, // report 2 lists every shift whose total break differs from this
+  EXPECTED_BREAK_MINUTES: 15, // tab 2 lists every shift with a break (> 0) that differs from this
   MIN_HOURS: 6,          // shift >= MIN_HOURS with 0 minutes of break is flagged
   DAYS_BACK: 7,          // today and 7 days earlier
   TIMEZONE: 'Europe/Amsterdam',
@@ -36,16 +36,14 @@ function runAudit() {
   const result = auditItems_(items, CONFIG.MIN_HOURS, CONFIG.EXPECTED_BREAK_MINUTES);
 
   const ss = SpreadsheetApp.create(`Quinyx break audit ${fromStr} to ${toStr}`);
-  writeTab_(ss.getSheets()[0].setName('No break 6h+'), result.rows, () => null);
-  writeTab_(ss.insertSheet('Break not ' + CONFIG.EXPECTED_BREAK_MINUTES + ' min'), result.breakMismatch,
-            r => r.break_minutes <= 0 ? '#f4c7c3'
-               : r.break_minutes > CONFIG.EXPECTED_BREAK_MINUTES ? '#fce8b2' : '#fff2cc');
+  writeTab_(ss.getSheets()[0].setName('No break 6h+'), result.rows);
+  writeTab_(ss.insertSheet('Break not ' + CONFIG.EXPECTED_BREAK_MINUTES + ' min'), result.breakMismatch);
   const folderId = props.getProperty('FOLDER_ID');
   if (folderId) DriveApp.getFileById(ss.getId()).moveTo(DriveApp.getFolderById(folderId));
 
   const summary = `${result.total} shifts checked (${result.skipped} leave/day-off skipped), ` +
                   `${result.rows.length} shifts of >= ${CONFIG.MIN_HOURS}h without a break, ` +
-                  `${result.breakMismatch.length} shifts with a total break other than ${CONFIG.EXPECTED_BREAK_MINUTES} min (${fromStr} to ${toStr}).`;
+                  `${result.breakMismatch.length} shifts with a break other than ${CONFIG.EXPECTED_BREAK_MINUTES} min (${fromStr} to ${toStr}).`;
   Logger.log(summary + ' ' + ss.getUrl());
 
   const recipients = props.getProperty('RECIPIENTS');
@@ -164,7 +162,7 @@ function auditItems_(items, minHours, expectedBreak) {
       field_hours: f.hours, breakType: f.breakType, comment: f.comment,
     };
     if (hours >= minHours && brk <= 0) rows.push(row);
-    if (row.break_minutes !== expectedBreak) breakMismatch.push(row);
+    if (row.break_minutes > 0 && row.break_minutes !== expectedBreak) breakMismatch.push(row);
   });
   const bySort = (a, b) => (a.start + a.badgeNo).localeCompare(b.start + b.badgeNo);
   rows.sort(bySort); breakMismatch.sort(bySort);
@@ -173,18 +171,14 @@ function auditItems_(items, minHours, expectedBreak) {
 
 // ---------- Helpers ----------
 
-/** Writes rows to a sheet with a bold frozen header; colorFn(row) returns a background colour or null. */
-function writeTab_(sheet, rows, colorFn) {
+/** Writes rows to a sheet with a bold frozen header and a filter. */
+function writeTab_(sheet, rows) {
   const values = [COLUMNS].concat(rows.map(r => COLUMNS.map(c => r[c] == null ? '' : r[c])));
   const range = sheet.getRange(1, 1, values.length, COLUMNS.length);
   range.setNumberFormat('@'); // keep ids and timestamps as text
   range.setValues(values);
   sheet.getRange(1, 1, 1, COLUMNS.length).setFontWeight('bold').setBackground('#d9d9d9');
   sheet.setFrozenRows(1);
-  rows.forEach((r, i) => {
-    const colour = colorFn(r);
-    if (colour) sheet.getRange(i + 2, 1, 1, COLUMNS.length).setBackground(colour);
-  });
   if (rows.length) sheet.getRange(1, 1, values.length, COLUMNS.length).createFilter();
   sheet.autoResizeColumns(1, COLUMNS.length);
 }

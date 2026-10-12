@@ -17,7 +17,7 @@ const r = ctx.auditItems_([
 ], 6, 15);
 assert.deepStrictEqual(r.rows.map(x => x.badgeNo).sort(), ['EXACT6', 'LONG', 'NIGHT']);
 assert.strictEqual(r.skipped, 1); assert.strictEqual(r.total, 8);
-// not 15 min: SHORT, EXACT6, LONG, BREAK(30), NIGHT; not B15/BREAK4 (15), not LEAVE (skipped)
-assert.deepStrictEqual(r.breakMismatch.map(x => x.badgeNo).sort(), ['BREAK', 'EXACT6', 'LONG', 'NIGHT', 'SHORT']);
+// break > 0 and != 15: only BREAK (30); no-break shifts, B15/BREAK4 (15) and LEAVE excluded
+assert.deepStrictEqual(r.breakMismatch.map(x => x.badgeNo), ['BREAK']);
 console.log('ok', r.rows.map(x => x.badgeNo + ':' + x.gross_hours).join(' '));
 console.log(ctx.COLUMNS.join(';'));

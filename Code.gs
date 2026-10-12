@@ -1,5 +1,7 @@
 /**
- * Audit: Quinyx shifts of 6 hours or longer without a break.
+ * Audit of Quinyx shifts. Produces two CSVs:
+ *  1. Shifts of 6 hours or longer without a break.
+ *  2. All shifts (any length) whose total break is not 15 minutes.
  *
  * Setup:
  *  1. Project Settings > Script Properties: set QUINYX_API_KEY.
@@ -8,6 +10,7 @@
  */
 const CONFIG = {
   ENDPOINT: 'https://api.quinyx.com/FlexForceWebServices.php',
+  EXPECTED_BREAK_MINUTES: 15, // report 2 lists every shift whose total break differs from this
   MIN_HOURS: 6,          // shift >= MIN_HOURS with 0 minutes of break is flagged
   DAYS_BACK: 7,          // today and 7 days earlier
   TIMEZONE: 'Europe/Amsterdam',
@@ -16,7 +19,7 @@ const CONFIG = {
 };
 
 const COLUMNS = ['scheduleId', 'persId', 'badgeNo', 'unitName', 'sectionName', 'categoryName',
-                 'start', 'end', 'gross_hours', 'field_hours', 'breakType', 'comment'];
+                 'start', 'end', 'gross_hours', 'break_minutes', 'field_hours', 'breakType', 'comment'];
 
 /** Entry point for the weekly trigger. */
 function runAudit() {
@@ -29,26 +32,29 @@ function runAudit() {
   const toStr = fmtDate_(today), fromStr = fmtDate_(from);
 
   const items = fetchSchedules_(apiKey, fromStr, toStr);
-  const result = auditItems_(items, CONFIG.MIN_HOURS);
-
-  const csv = toCsv_(result.rows);
-  const name = `audit_breaks_${fromStr}_${toStr}.csv`;
-  const blob = Utilities.newBlob('﻿' + csv, 'text/csv', name); // BOM for Excel
+  const result = auditItems_(items, CONFIG.MIN_HOURS, CONFIG.EXPECTED_BREAK_MINUTES);
 
   const folderId = props.getProperty('FOLDER_ID');
-  const file = folderId ? DriveApp.getFolderById(folderId).createFile(blob) : DriveApp.createFile(blob);
+  const folder = folderId ? DriveApp.getFolderById(folderId) : DriveApp.getRootFolder();
+  const makeBlob = (prefix, rows) =>
+    Utilities.newBlob('\uFEFF' + toCsv_(rows), 'text/csv', `${prefix}_${fromStr}_${toStr}.csv`); // BOM for Excel
+  const noBreakBlob = makeBlob('audit_no_break_6h_plus', result.rows);
+  const breakNot15Blob = makeBlob('audit_break_not_' + CONFIG.EXPECTED_BREAK_MINUTES + 'min', result.breakMismatch);
+  const file = folder.createFile(noBreakBlob);
+  const file2 = folder.createFile(breakNot15Blob);
 
   const summary = `${result.total} shifts checked (${result.skipped} leave/day-off skipped), ` +
-                  `${result.rows.length} shifts of >= ${CONFIG.MIN_HOURS}h without a break (${fromStr} to ${toStr}).`;
-  Logger.log(summary + ' ' + file.getUrl());
+                  `${result.rows.length} shifts of >= ${CONFIG.MIN_HOURS}h without a break, ` +
+                  `${result.breakMismatch.length} shifts with a total break other than ${CONFIG.EXPECTED_BREAK_MINUTES} min (${fromStr} to ${toStr}).`;
+  Logger.log(summary + ' ' + file.getUrl() + ' ' + file2.getUrl());
 
   const recipients = props.getProperty('RECIPIENTS');
   if (recipients) {
     MailApp.sendEmail({
       to: recipients,
-      subject: `Quinyx break audit ${fromStr} to ${toStr}: ${result.rows.length} shifts`,
-      body: `${summary}\n\nFile: ${file.getUrl()}`,
-      attachments: [blob],
+      subject: `Quinyx break audit ${fromStr} to ${toStr}: ${result.rows.length} without break, ${result.breakMismatch.length} break != ${CONFIG.EXPECTED_BREAK_MINUTES} min`,
+      body: `${summary}\n\nFiles:\n${file.getUrl()}\n${file2.getUrl()}`,
+      attachments: [noBreakBlob, breakNot15Blob],
     });
   }
   return summary;
@@ -135,8 +141,9 @@ function toMs_(date, time) {
   return Date.UTC(y, m - 1, d, hh, mm, ss || 0);
 }
 
-function auditItems_(items, minHours) {
-  const rows = [];
+function auditItems_(items, minHours, expectedBreak) {
+  expectedBreak = expectedBreak == null ? 15 : expectedBreak;
+  const rows = [], breakMismatch = [];
   let skipped = 0;
   items.forEach(f => {
     // leave / days off are not work shifts
@@ -144,17 +151,20 @@ function auditItems_(items, minHours) {
         (f.leaveReasonId || '0') !== '0' || f.productiveTime === 'false') { skipped++; return; }
     const start = toMs_(f.begDate, f.begTime), end = toMs_(f.endDate, f.endTime);
     const hours = (end - start) / 3600000;
-    if (hours >= minHours && breakMinutes_(f) <= 0) {
-      rows.push({
-        scheduleId: f.scheduleId, persId: f.persId, badgeNo: f.badgeNo, unitName: f.unitName,
-        sectionName: f.sectionName, categoryName: f.categoryName,
-        start: f.begDate + ' ' + f.begTime.slice(0, 5), end: f.endDate + ' ' + f.endTime.slice(0, 5),
-        gross_hours: Math.round(hours * 100) / 100, field_hours: f.hours, breakType: f.breakType, comment: f.comment,
-      });
-    }
+    const brk = breakMinutes_(f);
+    const row = {
+      scheduleId: f.scheduleId, persId: f.persId, badgeNo: f.badgeNo, unitName: f.unitName,
+      sectionName: f.sectionName, categoryName: f.categoryName,
+      start: f.begDate + ' ' + f.begTime.slice(0, 5), end: f.endDate + ' ' + f.endTime.slice(0, 5),
+      gross_hours: Math.round(hours * 100) / 100, break_minutes: Math.round(brk * 100) / 100,
+      field_hours: f.hours, breakType: f.breakType, comment: f.comment,
+    };
+    if (hours >= minHours && brk <= 0) rows.push(row);
+    if (row.break_minutes !== expectedBreak) breakMismatch.push(row);
   });
-  rows.sort((a, b) => (a.start + a.badgeNo).localeCompare(b.start + b.badgeNo));
-  return { rows, total: items.length, skipped };
+  const bySort = (a, b) => (a.start + a.badgeNo).localeCompare(b.start + b.badgeNo);
+  rows.sort(bySort); breakMismatch.sort(bySort);
+  return { rows, breakMismatch, total: items.length, skipped };
 }
 
 // ---------- Helpers ----------

@@ -16,5 +16,5 @@ const r = ctx.auditItems_([
 ], 6);
 assert.deepStrictEqual(r.rows.map(x => x.badgeNo).sort(), ['EXACT6', 'LONG', 'NIGHT']);
 assert.strictEqual(r.skipped, 1); assert.strictEqual(r.total, 7);
-console.log('ok', r.rows.map(x => x.badgeNo + ':' + x.uren_bruto).join(' '));
+console.log('ok', r.rows.map(x => x.badgeNo + ':' + x.gross_hours).join(' '));
 console.log(ctx.toCsv_(r.rows).split('\n')[0]);

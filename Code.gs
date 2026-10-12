@@ -1,28 +1,28 @@
 /**
- * Audit: Quinyx-diensten van 6 uur of langer zonder pauze.
+ * Audit: Quinyx shifts of 6 hours or longer without a break.
  *
  * Setup:
- *  1. Project Settings > Script Properties: zet QUINYX_API_KEY.
- *  2. (optioneel) Script Properties: RECIPIENTS (komma-gescheiden e-mails), FOLDER_ID (Drive-map voor de CSV).
- *  3. Draai runAudit() één keer handmatig (autorisatie), daarna createWeeklyTrigger() één keer.
+ *  1. Project Settings > Script Properties: set QUINYX_API_KEY.
+ *  2. (optional) Script Properties: RECIPIENTS (comma-separated emails), FOLDER_ID (Drive folder for the CSV).
+ *  3. Run runAudit() once manually (authorization), then run createWeeklyTrigger() once.
  */
 const CONFIG = {
   ENDPOINT: 'https://api.quinyx.com/FlexForceWebServices.php',
-  MIN_HOURS: 6,          // dienst >= MIN_HOURS en 0 minuten pauze wordt gemarkeerd
-  DAYS_BACK: 7,          // vandaag en 7 dagen eerder
+  MIN_HOURS: 6,          // shift >= MIN_HOURS with 0 minutes of break is flagged
+  DAYS_BACK: 7,          // today and 7 days earlier
   TIMEZONE: 'Europe/Amsterdam',
   TRIGGER_WEEKDAY: ScriptApp.WeekDay.MONDAY,
   TRIGGER_HOUR: 7,
 };
 
 const COLUMNS = ['scheduleId', 'persId', 'badgeNo', 'unitName', 'sectionName', 'categoryName',
-                 'start', 'eind', 'uren_bruto', 'uren_veld', 'breakType', 'comment'];
+                 'start', 'end', 'gross_hours', 'field_hours', 'breakType', 'comment'];
 
-/** Entry point voor de wekelijkse trigger. */
+/** Entry point for the weekly trigger. */
 function runAudit() {
   const props = PropertiesService.getScriptProperties();
   const apiKey = props.getProperty('QUINYX_API_KEY');
-  if (!apiKey) throw new Error('Script Property QUINYX_API_KEY ontbreekt');
+  if (!apiKey) throw new Error('Script Property QUINYX_API_KEY is missing');
 
   const today = new Date();
   const from = new Date(today.getTime() - CONFIG.DAYS_BACK * 86400000);
@@ -33,28 +33,28 @@ function runAudit() {
 
   const csv = toCsv_(result.rows);
   const name = `audit_breaks_${fromStr}_${toStr}.csv`;
-  const blob = Utilities.newBlob('﻿' + csv, 'text/csv', name); // BOM voor Excel
+  const blob = Utilities.newBlob('﻿' + csv, 'text/csv', name); // BOM for Excel
 
   const folderId = props.getProperty('FOLDER_ID');
   const file = folderId ? DriveApp.getFolderById(folderId).createFile(blob) : DriveApp.createFile(blob);
 
-  const summary = `${result.total} diensten gecontroleerd (${result.skipped} verlof/vrij overgeslagen), ` +
-                  `${result.rows.length} van >= ${CONFIG.MIN_HOURS}u zonder pauze (${fromStr} t/m ${toStr}).`;
+  const summary = `${result.total} shifts checked (${result.skipped} leave/day-off skipped), ` +
+                  `${result.rows.length} shifts of >= ${CONFIG.MIN_HOURS}h without a break (${fromStr} to ${toStr}).`;
   Logger.log(summary + ' ' + file.getUrl());
 
   const recipients = props.getProperty('RECIPIENTS');
   if (recipients) {
     MailApp.sendEmail({
       to: recipients,
-      subject: `Quinyx pauze-audit ${fromStr} t/m ${toStr}: ${result.rows.length} diensten`,
-      body: `${summary}\n\nBestand: ${file.getUrl()}`,
+      subject: `Quinyx break audit ${fromStr} to ${toStr}: ${result.rows.length} shifts`,
+      body: `${summary}\n\nFile: ${file.getUrl()}`,
       attachments: [blob],
     });
   }
   return summary;
 }
 
-/** Eenmalig draaien: maakt de wekelijkse trigger (verwijdert eerst bestaande voor runAudit). */
+/** Run once: creates the weekly trigger (first removes existing ones for runAudit). */
 function createWeeklyTrigger() {
   ScriptApp.getProjectTriggers()
     .filter(t => t.getHandlerFunction() === 'runAudit')
@@ -64,7 +64,7 @@ function createWeeklyTrigger() {
     .inTimezone(CONFIG.TIMEZONE).create();
 }
 
-/** Debug: sla de ruwe response op in Drive om veldnamen te checken. */
+/** Debug: saves the raw response to Drive to check field names. */
 function dumpRaw() {
   const key = PropertiesService.getScriptProperties().getProperty('QUINYX_API_KEY');
   const d = fmtDate_(new Date());
@@ -97,7 +97,7 @@ function fetchSchedules_(apiKey, fromDate, toDate) {
   return parseItems_(callApi_(apiKey, fromDate, toDate));
 }
 
-/** Geeft per <item> met begDate een object {veldnaam: tekst}. */
+/** Returns one {fieldName: text} object per <item> that has begDate. */
 function parseItems_(xml) {
   const items = [];
   const walk = el => {
@@ -112,14 +112,14 @@ function parseItems_(xml) {
   return items;
 }
 
-// ---------- Logica (puur, geen Apps Script-afhankelijkheden) ----------
+// ---------- Logic (pure, no Apps Script dependencies) ----------
 
 function timeToMinutes_(t) {
   const p = (t || '00:00:00').split(':').map(Number);
   return p[0] * 60 + (p[1] || 0) + (p[2] || 0) / 60;
 }
 
-/** Som van pauze 1-4; 00:00:00 - 00:00:00 = geen pauze. */
+/** Sum of breaks 1-4; 00:00:00 - 00:00:00 = no break. */
 function breakMinutes_(f) {
   let total = 0;
   ['', '2', '3', '4'].forEach(s => {
@@ -139,7 +139,7 @@ function auditItems_(items, minHours) {
   const rows = [];
   let skipped = 0;
   items.forEach(f => {
-    // verlof / vrije dagen zijn geen werkdiensten
+    // leave / days off are not work shifts
     if (f.isFreeDay === 'true' || f.approvedLeave === 'true' ||
         (f.leaveReasonId || '0') !== '0' || f.productiveTime === 'false') { skipped++; return; }
     const start = toMs_(f.begDate, f.begTime), end = toMs_(f.endDate, f.endTime);
@@ -148,8 +148,8 @@ function auditItems_(items, minHours) {
       rows.push({
         scheduleId: f.scheduleId, persId: f.persId, badgeNo: f.badgeNo, unitName: f.unitName,
         sectionName: f.sectionName, categoryName: f.categoryName,
-        start: f.begDate + ' ' + f.begTime.slice(0, 5), eind: f.endDate + ' ' + f.endTime.slice(0, 5),
-        uren_bruto: Math.round(hours * 100) / 100, uren_veld: f.hours, breakType: f.breakType, comment: f.comment,
+        start: f.begDate + ' ' + f.begTime.slice(0, 5), end: f.endDate + ' ' + f.endTime.slice(0, 5),
+        gross_hours: Math.round(hours * 100) / 100, field_hours: f.hours, breakType: f.breakType, comment: f.comment,
       });
     }
   });

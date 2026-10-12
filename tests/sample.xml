@@ -1,7 +1,7 @@
-<Envelope><Body><wsdlGetSchedulesV3Response><return>
-<item><id>1</id><badgeNo>A1</badgeNo><beginDateTime>2026-10-10 08:00:00</beginDateTime><endDateTime>2026-10-10 17:00:00</endDateTime><breakMinutes>30</breakMinutes></item>
-<item><id>2</id><badgeNo>A2</badgeNo><beginDateTime>2026-10-10 08:00:00</beginDateTime><endDateTime>2026-10-10 17:00:00</endDateTime><breakMinutes>0</breakMinutes></item>
-<item><id>3</id><badgeNo>A3</badgeNo><beginDateTime>2026-10-10 08:00:00</beginDateTime><endDateTime>2026-10-10 12:00:00</endDateTime></item>
-<item><id>4</id><badgeNo>A4</badgeNo><beginDateTime>2026-10-10 06:00:00</beginDateTime><endDateTime>2026-10-10 14:00:00</endDateTime><breaks><break><begin>2026-10-10 10:00:00</begin><end>2026-10-10 10:30:00</end></break></breaks></item>
-<item><id>5</id><badgeNo>A5</badgeNo><beginDateTime>2026-10-10 06:00:00</beginDateTime><endDateTime>2026-10-10 13:00:00</endDateTime></item>
-</return></wsdlGetSchedulesV3Response></Body></Envelope>
+<Envelope><Body><r><return>
+<item><begDate>2026-10-10</begDate><begTime>07:33:00</begTime><endDate>2026-10-10</endDate><endTime>13:06:00</endTime><begBreak>00:00:00</begBreak><endBreak>00:00:00</endBreak><begBreak2>00:00:00</begBreak2><endBreak2>00:00:00</endBreak2><begBreak3>00:00:00</begBreak3><endBreak3>00:00:00</endBreak3><begBreak4>00:00:00</begBreak4><endBreak4>00:00:00</endBreak4><badgeNo>SHORT</badgeNo><scheduleId>1</scheduleId><leaveReasonId>0</leaveReasonId><productiveTime>true</productiveTime><isFreeDay>false</isFreeDay></item>
+<item><begDate>2026-10-10</begDate><begTime>07:00:00</begTime><endDate>2026-10-10</endDate><endTime>16:00:00</endTime><begBreak>00:00:00</begBreak><endBreak>00:00:00</endBreak><badgeNo>LONG_NOBREAK</badgeNo><scheduleId>2</scheduleId><leaveReasonId>0</leaveReasonId><productiveTime>true</productiveTime><isFreeDay>false</isFreeDay></item>
+<item><begDate>2026-10-10</begDate><begTime>07:00:00</begTime><endDate>2026-10-10</endDate><endTime>16:00:00</endTime><begBreak>12:00:00</begBreak><endBreak>12:30:00</endBreak><badgeNo>LONG_BREAK</badgeNo><scheduleId>3</scheduleId><leaveReasonId>0</leaveReasonId><productiveTime>true</productiveTime><isFreeDay>false</isFreeDay></item>
+<item><begDate>2026-10-10</begDate><begTime>07:00:00</begTime><endDate>2026-10-10</endDate><endTime>16:00:00</endTime><badgeNo>LEAVE</badgeNo><scheduleId>4</scheduleId><leaveReasonId>12</leaveReasonId><productiveTime>true</productiveTime><isFreeDay>false</isFreeDay></item>
+<item><begDate>2026-10-10</begDate><begTime>22:00:00</begTime><endDate>2026-10-11</endDate><endTime>06:30:00</endTime><badgeNo>NIGHT_NOBREAK</badgeNo><scheduleId>5</scheduleId><leaveReasonId>0</leaveReasonId><productiveTime>true</productiveTime><isFreeDay>false</isFreeDay></item>
+</return></r></Body></Envelope>

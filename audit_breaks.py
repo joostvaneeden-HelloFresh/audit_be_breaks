@@ -6,22 +6,13 @@ Gebruik:
   python3 audit_breaks.py --input response.xml      # offline, op opgeslagen response
   python3 audit_breaks.py ... --dump raw.xml        # sla ruwe response op om veldnamen te checken
 """
-import argparse, csv, os, re, sys, urllib.request
+import argparse, csv, os, sys, urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 
 ENDPOINT = "https://api.quinyx.com/FlexForceWebServices.php"
 NS_URI = "uri:FlexForce"
 NS_FLEX = "https://api.quinyx.com/soap/FlexForce"
-
-# Veldnamen (lowercase) waarmee we een dienst herkennen; pas aan na --dump indien nodig.
-START_KEYS = ("begindatetime", "fromdatetime", "startdatetime", "begin", "start", "fromtime", "timefrom")
-END_KEYS = ("enddatetime", "todatetime", "stopdatetime", "end", "stop", "totime", "timeto")
-BREAK_MIN_KEYS = ("breakminutes", "breaktime", "breaklength", "breakduration", "unpaidbreak", "paidbreak", "pause")
-ID_KEYS = ("id", "scheduleid", "shiftid")
-NAME_KEYS = ("employeename", "name", "badgeno", "badgenumber", "employeeid", "employeeno")
-UNIT_KEYS = ("unitname", "unit", "unitid", "section", "sectionname")
-
 
 def build_request(api_key, d_from, d_to):
     return f"""<soapenv:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:uri="{NS_URI}">
@@ -42,90 +33,54 @@ def fetch(api_key, d_from, d_to, endpoint):
 
 
 def local(tag):
-    return tag.rsplit("}", 1)[-1].lower()
+    return tag.rsplit("}", 1)[-1]
 
 
-def children(el):
-    return {local(c.tag): c for c in el}
+def fields(item):
+    return {local(c.tag): (c.text or "").strip() for c in item}
 
 
-def text(el, keys):
-    ch = children(el)
-    for k in keys:
-        if k in ch and (ch[k].text or "").strip():
-            return ch[k].text.strip()
-    return ""
+def dt(date, time):
+    return datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M:%S")
 
 
-def parse_dt(s):
-    s = s.strip().replace("T", " ")
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S.%f"):
-        try:
-            return datetime.strptime(s[:26] if "%f" in fmt else s[:19 if "S" in fmt and "%f" not in fmt else 16], fmt)
-        except ValueError:
-            continue
-    return None
-
-
-def to_minutes(s):
-    """Pauze als minuten. Accepteert '30', '0.5' (uren niet te raden -> minuten), 'HH:MM'."""
-    s = (s or "").strip()
-    if not s:
-        return 0.0
-    if ":" in s:
-        parts = [float(p) for p in s.split(":")]
-        return parts[0] * 60 + parts[1]
-    try:
-        return float(s)
-    except ValueError:
-        return 0.0
-
-
-def break_minutes(shift):
-    """Som van pauzes: platte pauzevelden op de dienst + geneste break-elementen met duur of van/tot."""
+def break_minutes(f):
+    """Som van pauzes 1-4; 00:00:00-00:00:00 betekent 'geen pauze'."""
     total = 0.0
-    for c in shift:
-        name = local(c.tag)
-        if "break" not in name and name not in BREAK_MIN_KEYS:
-            continue
-        sub = list(c)
-        if not sub:
-            total += to_minutes(c.text)
-            continue
-        # genest: ofwel items met start/eind, ofwel een duur
-        items = sub if any(list(s) for s in sub) else [c]
-        for it in items:
-            s, e = parse_dt(text(it, START_KEYS)), parse_dt(text(it, END_KEYS))
-            if s and e:
-                total += (e - s).total_seconds() / 60
-            else:
-                total += to_minutes(text(it, BREAK_MIN_KEYS + ("minutes", "duration", "length")))
+    for suffix in ("", "2", "3", "4"):
+        b, e = f.get(f"begBreak{suffix}", "00:00:00"), f.get(f"endBreak{suffix}", "00:00:00")
+        s_, e_ = dt("2000-01-01", b), dt("2000-01-01", e)
+        if e_ < s_:
+            e_ += timedelta(days=1)
+        total += (e_ - s_).total_seconds() / 60
     return total
-
-
-def iter_shifts(root):
-    for el in root.iter():
-        if not len(el) or "break" in local(el.tag):
-            continue
-        s, e = parse_dt(text(el, START_KEYS)), parse_dt(text(el, END_KEYS))
-        if s and e:
-            yield el, s, e
 
 
 def audit(xml_bytes, min_hours):
     root = ET.fromstring(xml_bytes)
-    rows, total = [], 0
-    for el, s, e in iter_shifts(root):
+    rows, total, skipped = [], 0, 0
+    for item in root.iter():
+        if local(item.tag) != "item":
+            continue
+        f = fields(item)
+        if "begDate" not in f or "begTime" not in f:
+            continue
         total += 1
-        if e < s:
-            e += timedelta(days=1)
-        hours = (e - s).total_seconds() / 3600
-        brk = break_minutes(el)
+        # verlof / vrije dagen zijn geen werkdiensten
+        if f.get("isFreeDay") == "true" or f.get("approvedLeave") == "true" \
+                or f.get("leaveReasonId", "0") != "0" or f.get("productiveTime") == "false":
+            skipped += 1
+            continue
+        s_, e_ = dt(f["begDate"], f["begTime"]), dt(f["endDate"], f["endTime"])
+        hours = (e_ - s_).total_seconds() / 3600
+        brk = break_minutes(f)
         if hours > min_hours and brk <= 0:
-            rows.append({"id": text(el, ID_KEYS), "medewerker": text(el, NAME_KEYS), "unit": text(el, UNIT_KEYS),
-                         "start": s.strftime("%Y-%m-%d %H:%M"), "eind": e.strftime("%Y-%m-%d %H:%M"),
-                         "uren": round(hours, 2), "pauze_min": 0})
-    return rows, total
+            rows.append({"scheduleId": f.get("scheduleId"), "persId": f.get("persId"), "badgeNo": f.get("badgeNo"),
+                         "unit": f.get("unitName"), "section": f.get("sectionName"), "categorie": f.get("categoryName"),
+                         "start": s_.strftime("%Y-%m-%d %H:%M"), "eind": e_.strftime("%Y-%m-%d %H:%M"),
+                         "uren_bruto": round(hours, 2), "uren_veld": f.get("hours"), "breakType": f.get("breakType"),
+                         "comment": f.get("comment")})
+    return rows, total, skipped
 
 
 def main():
@@ -148,14 +103,14 @@ def main():
     if a.dump:
         open(a.dump, "wb").write(xml)
 
-    rows, total = audit(xml, a.min_hours)
-    rows.sort(key=lambda r: (r["start"], r["medewerker"]))
-    fields = ["id", "medewerker", "unit", "start", "eind", "uren", "pauze_min"]
+    rows, total, skipped = audit(xml, a.min_hours)
+    rows.sort(key=lambda r: (r["start"], r["badgeNo"]))
+    cols = list(rows[0]) if rows else ["scheduleId", "persId", "badgeNo", "unit", "section", "categorie", "start", "eind", "uren_bruto", "uren_veld", "breakType", "comment"]
     with open(a.output, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fields, delimiter=";"); w.writeheader(); w.writerows(rows)
-    print(f"{total} diensten gecontroleerd, {len(rows)} > {a.min_hours:g}u zonder pauze -> {a.output}")
+        w = csv.DictWriter(f, cols, delimiter=";"); w.writeheader(); w.writerows(rows)
+    print(f"{total} diensten gecontroleerd ({skipped} verlof/vrij overgeslagen), {len(rows)} > {a.min_hours:g}u zonder pauze -> {a.output}")
     if total == 0:
-        print("Geen diensten herkend: check de response met --dump en pas de *_KEYS aan.", file=sys.stderr)
+        print("Geen diensten herkend: check de response met --dump.", file=sys.stderr)
 
 
 if __name__ == "__main__":

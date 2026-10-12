@@ -1,0 +1,7 @@
+<Envelope><Body><wsdlGetSchedulesV3Response><return>
+<item><id>1</id><badgeNo>A1</badgeNo><beginDateTime>2026-10-10 08:00:00</beginDateTime><endDateTime>2026-10-10 17:00:00</endDateTime><breakMinutes>30</breakMinutes></item>
+<item><id>2</id><badgeNo>A2</badgeNo><beginDateTime>2026-10-10 08:00:00</beginDateTime><endDateTime>2026-10-10 17:00:00</endDateTime><breakMinutes>0</breakMinutes></item>
+<item><id>3</id><badgeNo>A3</badgeNo><beginDateTime>2026-10-10 08:00:00</beginDateTime><endDateTime>2026-10-10 12:00:00</endDateTime></item>
+<item><id>4</id><badgeNo>A4</badgeNo><beginDateTime>2026-10-10 06:00:00</beginDateTime><endDateTime>2026-10-10 14:00:00</endDateTime><breaks><break><begin>2026-10-10 10:00:00</begin><end>2026-10-10 10:30:00</end></break></breaks></item>
+<item><id>5</id><badgeNo>A5</badgeNo><beginDateTime>2026-10-10 06:00:00</beginDateTime><endDateTime>2026-10-10 13:00:00</endDateTime></item>
+</return></wsdlGetSchedulesV3Response></Body></Envelope>

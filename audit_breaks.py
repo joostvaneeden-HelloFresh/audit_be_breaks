@@ -2,13 +2,14 @@
 """Audit: Quinyx-diensten langer dan N uur zonder pauze.
 
 Gebruik:
+  QUINYX_API_KEY=... python3 audit_breaks.py -o audit.csv   # vandaag en 7 dagen terug
   QUINYX_API_KEY=... python3 audit_breaks.py --from 2026-10-01 --to 2026-10-10 -o audit.csv
   python3 audit_breaks.py --input response.xml      # offline, op opgeslagen response
   python3 audit_breaks.py ... --dump raw.xml        # sla ruwe response op om veldnamen te checken
 """
 import argparse, csv, os, sys, urllib.request
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 ENDPOINT = "https://api.quinyx.com/FlexForceWebServices.php"
 NS_URI = "uri:FlexForce"
@@ -74,7 +75,7 @@ def audit(xml_bytes, min_hours):
         s_, e_ = dt(f["begDate"], f["begTime"]), dt(f["endDate"], f["endTime"])
         hours = (e_ - s_).total_seconds() / 3600
         brk = break_minutes(f)
-        if hours > min_hours and brk <= 0:
+        if hours >= min_hours and brk <= 0:
             rows.append({"scheduleId": f.get("scheduleId"), "persId": f.get("persId"), "badgeNo": f.get("badgeNo"),
                          "unit": f.get("unitName"), "section": f.get("sectionName"), "categorie": f.get("categoryName"),
                          "start": s_.strftime("%Y-%m-%d %H:%M"), "eind": e_.strftime("%Y-%m-%d %H:%M"),
@@ -97,8 +98,11 @@ def main():
         xml = open(a.input, "rb").read()
     else:
         key = os.environ.get("QUINYX_API_KEY")
-        if not (key and a.d_from and a.d_to):
-            ap.error("geef --from/--to en zet QUINYX_API_KEY (of gebruik --input)")
+        if not key:
+            ap.error("zet QUINYX_API_KEY (of gebruik --input)")
+        # standaard: vandaag en de 7 dagen daarvoor
+        a.d_to = a.d_to or date.today().isoformat()
+        a.d_from = a.d_from or (date.fromisoformat(a.d_to) - timedelta(days=7)).isoformat()
         xml = fetch(key, a.d_from, a.d_to, a.endpoint)
     if a.dump:
         open(a.dump, "wb").write(xml)
@@ -108,7 +112,7 @@ def main():
     cols = list(rows[0]) if rows else ["scheduleId", "persId", "badgeNo", "unit", "section", "categorie", "start", "eind", "uren_bruto", "uren_veld", "breakType", "comment"]
     with open(a.output, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, cols, delimiter=";"); w.writeheader(); w.writerows(rows)
-    print(f"{total} diensten gecontroleerd ({skipped} verlof/vrij overgeslagen), {len(rows)} > {a.min_hours:g}u zonder pauze -> {a.output}")
+    print(f"{total} diensten gecontroleerd ({skipped} verlof/vrij overgeslagen), {len(rows)} van >= {a.min_hours:g}u zonder pauze -> {a.output}")
     if total == 0:
         print("Geen diensten herkend: check de response met --dump.", file=sys.stderr)
 

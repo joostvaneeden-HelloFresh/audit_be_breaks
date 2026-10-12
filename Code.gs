@@ -1,11 +1,12 @@
 /**
- * Audit of Quinyx shifts. Produces two CSVs:
- *  1. Shifts of 6 hours or longer without a break.
- *  2. All shifts (any length) whose total break is not 15 minutes.
+ * Audit of Quinyx shifts. Produces one Google Sheet with two tabs:
+ *  1. "No break 6h+": shifts of 6 hours or longer without a break.
+ *  2. "Break not 15 min": all shifts (any length) whose total break is not 15 minutes,
+ *     colour coded (red = no break, orange = longer than expected, yellow = shorter than expected).
  *
  * Setup:
  *  1. Project Settings > Script Properties: set QUINYX_API_KEY.
- *  2. (optional) Script Properties: RECIPIENTS (comma-separated emails), FOLDER_ID (Drive folder for the CSV).
+ *  2. (optional) Script Properties: RECIPIENTS (comma-separated emails), FOLDER_ID (Drive folder for the Sheet).
  *  3. Run runAudit() once manually (authorization), then run createWeeklyTrigger() once.
  */
 const CONFIG = {
@@ -34,27 +35,30 @@ function runAudit() {
   const items = fetchSchedules_(apiKey, fromStr, toStr);
   const result = auditItems_(items, CONFIG.MIN_HOURS, CONFIG.EXPECTED_BREAK_MINUTES);
 
+  const ss = SpreadsheetApp.create(`Quinyx break audit ${fromStr} to ${toStr}`);
+  writeTab_(ss.getSheets()[0].setName('No break 6h+'), result.rows, () => null);
+  writeTab_(ss.insertSheet('Break not ' + CONFIG.EXPECTED_BREAK_MINUTES + ' min'), result.breakMismatch,
+            r => r.break_minutes <= 0 ? '#f4c7c3'
+               : r.break_minutes > CONFIG.EXPECTED_BREAK_MINUTES ? '#fce8b2' : '#fff2cc');
   const folderId = props.getProperty('FOLDER_ID');
-  const folder = folderId ? DriveApp.getFolderById(folderId) : DriveApp.getRootFolder();
-  const makeBlob = (prefix, rows) =>
-    Utilities.newBlob('\uFEFF' + toCsv_(rows), 'text/csv', `${prefix}_${fromStr}_${toStr}.csv`); // BOM for Excel
-  const noBreakBlob = makeBlob('audit_no_break_6h_plus', result.rows);
-  const breakNot15Blob = makeBlob('audit_break_not_' + CONFIG.EXPECTED_BREAK_MINUTES + 'min', result.breakMismatch);
-  const file = folder.createFile(noBreakBlob);
-  const file2 = folder.createFile(breakNot15Blob);
+  if (folderId) DriveApp.getFileById(ss.getId()).moveTo(DriveApp.getFolderById(folderId));
 
   const summary = `${result.total} shifts checked (${result.skipped} leave/day-off skipped), ` +
                   `${result.rows.length} shifts of >= ${CONFIG.MIN_HOURS}h without a break, ` +
                   `${result.breakMismatch.length} shifts with a total break other than ${CONFIG.EXPECTED_BREAK_MINUTES} min (${fromStr} to ${toStr}).`;
-  Logger.log(summary + ' ' + file.getUrl() + ' ' + file2.getUrl());
+  Logger.log(summary + ' ' + ss.getUrl());
 
   const recipients = props.getProperty('RECIPIENTS');
   if (recipients) {
+    const xlsx = UrlFetchApp.fetch(
+      'https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export?format=xlsx',
+      { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } }
+    ).getBlob().setName(`quinyx_break_audit_${fromStr}_${toStr}.xlsx`);
     MailApp.sendEmail({
       to: recipients,
       subject: `Quinyx break audit ${fromStr} to ${toStr}: ${result.rows.length} without break, ${result.breakMismatch.length} break != ${CONFIG.EXPECTED_BREAK_MINUTES} min`,
-      body: `${summary}\n\nFiles:\n${file.getUrl()}\n${file2.getUrl()}`,
-      attachments: [noBreakBlob, breakNot15Blob],
+      body: `${summary}\n\nSheet: ${ss.getUrl()}`,
+      attachments: [xlsx],
     });
   }
   return summary;
@@ -169,12 +173,20 @@ function auditItems_(items, minHours, expectedBreak) {
 
 // ---------- Helpers ----------
 
-function toCsv_(rows) {
-  const esc = v => {
-    const s = v == null ? '' : String(v);
-    return /[;"\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  };
-  return [COLUMNS.join(';')].concat(rows.map(r => COLUMNS.map(c => esc(r[c])).join(';'))).join('\n');
+/** Writes rows to a sheet with a bold frozen header; colorFn(row) returns a background colour or null. */
+function writeTab_(sheet, rows, colorFn) {
+  const values = [COLUMNS].concat(rows.map(r => COLUMNS.map(c => r[c] == null ? '' : r[c])));
+  const range = sheet.getRange(1, 1, values.length, COLUMNS.length);
+  range.setNumberFormat('@'); // keep ids and timestamps as text
+  range.setValues(values);
+  sheet.getRange(1, 1, 1, COLUMNS.length).setFontWeight('bold').setBackground('#d9d9d9');
+  sheet.setFrozenRows(1);
+  rows.forEach((r, i) => {
+    const colour = colorFn(r);
+    if (colour) sheet.getRange(i + 2, 1, 1, COLUMNS.length).setBackground(colour);
+  });
+  if (rows.length) sheet.getRange(1, 1, values.length, COLUMNS.length).createFilter();
+  sheet.autoResizeColumns(1, COLUMNS.length);
 }
 
 function fmtDate_(d) { return Utilities.formatDate(d, CONFIG.TIMEZONE, 'yyyy-MM-dd'); }

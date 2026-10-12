@@ -1,7 +1,7 @@
 // Draai: node tests/logic.test.js  (test de pure logica uit Code.gs)
 const fs = require('fs'), assert = require('assert');
 const src = fs.readFileSync(__dirname + '/../Code.gs', 'utf8').replace('ScriptApp.WeekDay.MONDAY', '1');
-const ctx = new Function(src + '; return {auditItems_, breakMinutes_, toCsv_};')();
+const ctx = new Function(src + '; return {auditItems_, breakMinutes_, COLUMNS};')();
 const base = { begDate: '2026-10-10', endDate: '2026-10-10', begBreak: '00:00:00', endBreak: '00:00:00',
   leaveReasonId: '0', productiveTime: 'true', isFreeDay: 'false', approvedLeave: 'false' };
 const it = (o) => Object.assign({}, base, o);
@@ -20,4 +20,4 @@ assert.strictEqual(r.skipped, 1); assert.strictEqual(r.total, 8);
 // not 15 min: SHORT, EXACT6, LONG, BREAK(30), NIGHT; not B15/BREAK4 (15), not LEAVE (skipped)
 assert.deepStrictEqual(r.breakMismatch.map(x => x.badgeNo).sort(), ['BREAK', 'EXACT6', 'LONG', 'NIGHT', 'SHORT']);
 console.log('ok', r.rows.map(x => x.badgeNo + ':' + x.gross_hours).join(' '));
-console.log(ctx.toCsv_(r.rows).split('\n')[0]);
+console.log(ctx.COLUMNS.join(';'));

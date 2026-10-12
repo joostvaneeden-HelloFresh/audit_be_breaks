@@ -19,8 +19,8 @@ const CONFIG = {
 };
 
 const COLORS = { missing_break: '#f4c7c3', break_not_expected: '#c9daf8' }; // red, blue
-const COLUMNS = ['issue', 'scheduleId', 'persId', 'badgeNo', 'unitName', 'sectionName', 'categoryName',
-                 'start', 'end', 'gross_hours', 'break_minutes', 'field_hours', 'breakType', 'comment'];
+const COLUMNS = ['issue', 'badgeNo', 'unitName', 'sectionName', 'categoryName',
+                 'start', 'end', 'gross_hours', 'break_minutes', 'field_hours', 'comment'];
 
 /** Entry point for the weekly trigger. */
 function runAudit() {
@@ -157,11 +157,11 @@ function auditItems_(items, minHours, expectedBreak) {
                 : brk > 0 && Math.round(brk * 100) / 100 !== expectedBreak ? 'break_not_expected' : null;
     if (!issue) return;
     rows.push({
-      issue, scheduleId: f.scheduleId, persId: f.persId, badgeNo: f.badgeNo, unitName: f.unitName,
+      issue, badgeNo: f.badgeNo, unitName: f.unitName,
       sectionName: f.sectionName, categoryName: f.categoryName,
       start: f.begDate + ' ' + f.begTime.slice(0, 5), end: f.endDate + ' ' + f.endTime.slice(0, 5),
       gross_hours: Math.round(hours * 100) / 100, break_minutes: Math.round(brk * 100) / 100,
-      field_hours: f.hours, breakType: f.breakType, comment: f.comment,
+      field_hours: f.hours, comment: f.comment,
     });
   });
   const bySort = (a, b) => (a.start + a.badgeNo).localeCompare(b.start + b.badgeNo);

@@ -4,14 +4,18 @@
  *  - BLUE: shifts with a break whose total is not 15 minutes (longer or shorter).
  *
  * Setup:
- *  1. Project Settings > Script Properties: add one property per hub, named QUINYX_API_KEY_<hub>,
- *     with the hub's API key as value. Example:
- *        QUINYX_API_KEY_Diemen   = <key of Hub Diemen>
- *        QUINYX_API_KEY_Utrecht  = <key of Hub Utrecht>
- *     The part after QUINYX_API_KEY_ becomes the "account" column. Add a property to add a hub.
+ *  1. Project Settings > Script Properties: add one property per hub, with the hub's API key as value:
+ *        QUINYX_API_KEY_Antwerpen
+ *        QUINYX_API_KEY_Gent
+ *        QUINYX_API_KEY_Brussel
+ *        QUINYX_API_KEY_Namur
+ *        QUINYX_API_KEY_Kluisbergen
+ *        QUINYX_API_KEY_Houthalen
  *  2. Run runAudit() once manually and click through the authorization.
  *  3. Run createWeeklyTrigger() once. Done: it now runs every Monday.
  */
+const HUBS = ['Antwerpen', 'Gent', 'Brussel', 'Namur', 'Kluisbergen', 'Houthalen'];
+
 // Optional: emails that should receive the report (comma-separated), e.g. 'a@b.com, c@d.com'. Empty = no email.
 const RECIPIENTS = '';
 
@@ -81,13 +85,14 @@ function runAudit() {
   return summary;
 }
 
-/** One account per Script Property named QUINYX_API_KEY_<hub>; a plain QUINYX_API_KEY is labelled "default". */
+/** One account per hub in HUBS, key from Script Property QUINYX_API_KEY_<hub>. */
 function getAccounts_(props) {
-  const prefix = 'QUINYX_API_KEY_', all = props.getProperties();
-  const accounts = Object.keys(all).filter(k => k.indexOf(prefix) === 0 && all[k].trim())
-    .sort().map(k => ({ label: k.slice(prefix.length), key: all[k].trim() }));
-  if (all.QUINYX_API_KEY && all.QUINYX_API_KEY.trim()) accounts.push({ label: 'default', key: all.QUINYX_API_KEY.trim() });
-  if (!accounts.length) throw new Error('No API key found: add Script Properties named QUINYX_API_KEY_<hub> (see top of Code.gs)');
+  const all = props.getProperties();
+  const accounts = HUBS.filter(h => (all['QUINYX_API_KEY_' + h] || '').trim())
+    .map(h => ({ label: h, key: all['QUINYX_API_KEY_' + h].trim() }));
+  const missing = HUBS.filter(h => !accounts.some(a => a.label === h));
+  if (missing.length) Logger.log('No API key for: ' + missing.join(', '));
+  if (!accounts.length) throw new Error('No API keys found: add Script Properties QUINYX_API_KEY_<hub> (see top of Code.gs)');
   return accounts;
 }
 

@@ -1,6 +1,7 @@
 // Draai: node tests/logic.test.js  (test de pure logica uit Code.gs)
 const fs = require('fs'), assert = require('assert');
 const src = fs.readFileSync(__dirname + '/../Code.gs', 'utf8').replace('ScriptApp.WeekDay.MONDAY', '1');
+global.Logger = { log() {} };
 const ctx = new Function(src + '; return {auditItems_, breakMinutes_, COLUMNS, getAccounts_};')();
 const base = { begDate: '2026-10-10', endDate: '2026-10-10', begBreak: '00:00:00', endBreak: '00:00:00',
   leaveReasonId: '0', productiveTime: 'true', isFreeDay: 'false', approvedLeave: 'false' };
@@ -24,8 +25,7 @@ console.log('ok', r.rows.map(x => x.badgeNo + ':' + x.issue).join(' '));
 console.log(ctx.COLUMNS.join(';'));
 
 const props = v => ({ getProperties: () => v });
-assert.deepStrictEqual(ctx.getAccounts_(props({ QUINYX_API_KEY_Utrecht: ' b ', QUINYX_API_KEY_Diemen: 'a', QUINYX_API_KEY_Empty: ' ', OTHER: 'x' })),
-  [{ label: 'Diemen', key: 'a' }, { label: 'Utrecht', key: 'b' }]);
-assert.deepStrictEqual(ctx.getAccounts_(props({ QUINYX_API_KEY: 'k' })), [{ label: 'default', key: 'k' }]);
+assert.deepStrictEqual(ctx.getAccounts_(props({ QUINYX_API_KEY_Gent: ' b ', QUINYX_API_KEY_Antwerpen: 'a', QUINYX_API_KEY_Namur: ' ', OTHER: 'x' })),
+  [{ label: 'Antwerpen', key: 'a' }, { label: 'Gent', key: 'b' }]);
 assert.throws(() => ctx.getAccounts_(props({})));
 console.log('accounts ok');

@@ -4,17 +4,14 @@
  *  - BLUE: shifts with a break whose total is not 15 minutes (longer or shorter).
  *
  * Setup:
- *  1. Paste your API keys in API_KEYS below (one line per account).
+ *  1. Project Settings > Script Properties: add one property per hub, named QUINYX_API_KEY_<hub>,
+ *     with the hub's API key as value. Example:
+ *        QUINYX_API_KEY_Diemen   = <key of Hub Diemen>
+ *        QUINYX_API_KEY_Utrecht  = <key of Hub Utrecht>
+ *     The part after QUINYX_API_KEY_ becomes the "account" column. Add a property to add a hub.
  *  2. Run runAudit() once manually and click through the authorization.
  *  3. Run createWeeklyTrigger() once. Done: it now runs every Monday.
  */
-// STEP 1: put your Quinyx API keys here. Left side = a name you choose, right side = the key.
-// Add or remove lines as needed. Do not commit real keys to Git.
-const API_KEYS = {
-  'NL': 'PASTE_API_KEY_HERE',
-  'BE': 'PASTE_API_KEY_HERE',
-};
-
 // Optional: emails that should receive the report (comma-separated), e.g. 'a@b.com, c@d.com'. Empty = no email.
 const RECIPIENTS = '';
 
@@ -84,14 +81,13 @@ function runAudit() {
   return summary;
 }
 
-/** Reads accounts from API_KEYS (ignoring placeholders); falls back to Script Properties if API_KEYS is empty. */
+/** One account per Script Property named QUINYX_API_KEY_<hub>; a plain QUINYX_API_KEY is labelled "default". */
 function getAccounts_(props) {
-  const accounts = Object.keys(API_KEYS)
-    .filter(label => API_KEYS[label] && API_KEYS[label] !== 'PASTE_API_KEY_HERE')
-    .map(label => ({ label, key: API_KEYS[label].trim() }));
-  const single = props && props.getProperty('QUINYX_API_KEY');
-  if (!accounts.length && single) accounts.push({ label: 'default', key: single });
-  if (!accounts.length) throw new Error('No API key found: paste your key(s) in API_KEYS at the top of Code.gs');
+  const prefix = 'QUINYX_API_KEY_', all = props.getProperties();
+  const accounts = Object.keys(all).filter(k => k.indexOf(prefix) === 0 && all[k].trim())
+    .sort().map(k => ({ label: k.slice(prefix.length), key: all[k].trim() }));
+  if (all.QUINYX_API_KEY && all.QUINYX_API_KEY.trim()) accounts.push({ label: 'default', key: all.QUINYX_API_KEY.trim() });
+  if (!accounts.length) throw new Error('No API key found: add Script Properties named QUINYX_API_KEY_<hub> (see top of Code.gs)');
   return accounts;
 }
 

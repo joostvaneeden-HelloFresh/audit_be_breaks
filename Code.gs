@@ -4,13 +4,20 @@
  *  - BLUE: shifts with a break whose total is not 15 minutes (longer or shorter).
  *
  * Setup:
- *  1. Project Settings > Script Properties: set QUINYX_API_KEYS, one "label=apiKey" per line, e.g.
- *       NL=abc123
- *       BE=def456
- *     (a single QUINYX_API_KEY is still supported and gets the label "default").
- *  2. (optional) Script Properties: RECIPIENTS (comma-separated emails), FOLDER_ID (Drive folder for the Sheet).
- *  3. Run runAudit() once manually (authorization), then run createWeeklyTrigger() once.
+ *  1. Paste your API keys in API_KEYS below (one line per account).
+ *  2. Run runAudit() once manually and click through the authorization.
+ *  3. Run createWeeklyTrigger() once. Done: it now runs every Monday.
  */
+// STEP 1: put your Quinyx API keys here. Left side = a name you choose, right side = the key.
+// Add or remove lines as needed. Do not commit real keys to Git.
+const API_KEYS = {
+  'NL': 'PASTE_API_KEY_HERE',
+  'BE': 'PASTE_API_KEY_HERE',
+};
+
+// Optional: emails that should receive the report (comma-separated), e.g. 'a@b.com, c@d.com'. Empty = no email.
+const RECIPIENTS = '';
+
 const CONFIG = {
   ENDPOINT: 'https://api.quinyx.com/FlexForceWebServices.php',
   EXPECTED_BREAK_MINUTES: 15, // a break (> 0) that differs from this is flagged blue
@@ -60,7 +67,7 @@ function runAudit() {
                   (errors.length ? `\n\nFAILED accounts:\n${errors.join('\n')}` : '');
   Logger.log(summary + ' ' + ss.getUrl());
 
-  const recipients = props.getProperty('RECIPIENTS');
+  const recipients = RECIPIENTS || props.getProperty('RECIPIENTS');
   if (recipients) {
     const xlsx = UrlFetchApp.fetch(
       'https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export?format=xlsx',
@@ -77,17 +84,14 @@ function runAudit() {
   return summary;
 }
 
-/** Reads accounts from QUINYX_API_KEYS ("label=key" per line) or the legacy QUINYX_API_KEY. */
+/** Reads accounts from API_KEYS (ignoring placeholders); falls back to Script Properties if API_KEYS is empty. */
 function getAccounts_(props) {
-  const multi = props.getProperty('QUINYX_API_KEYS');
-  const accounts = (multi || '').split(/[\r\n;]+/).map(l => l.trim()).filter(Boolean).map(l => {
-    const i = l.indexOf('=');
-    if (i < 1) throw new Error('QUINYX_API_KEYS: expected "label=apiKey" per line, got: ' + l.slice(0, 20));
-    return { label: l.slice(0, i).trim(), key: l.slice(i + 1).trim() };
-  });
-  const single = props.getProperty('QUINYX_API_KEY');
+  const accounts = Object.keys(API_KEYS)
+    .filter(label => API_KEYS[label] && API_KEYS[label] !== 'PASTE_API_KEY_HERE')
+    .map(label => ({ label, key: API_KEYS[label].trim() }));
+  const single = props && props.getProperty('QUINYX_API_KEY');
   if (!accounts.length && single) accounts.push({ label: 'default', key: single });
-  if (!accounts.length) throw new Error('Script Property QUINYX_API_KEYS is missing');
+  if (!accounts.length) throw new Error('No API key found: paste your key(s) in API_KEYS at the top of Code.gs');
   return accounts;
 }
 

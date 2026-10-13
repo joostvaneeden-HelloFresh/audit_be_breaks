@@ -24,9 +24,7 @@ console.log('ok', r.rows.map(x => x.badgeNo + ':' + x.issue).join(' '));
 console.log(ctx.COLUMNS.join(';'));
 
 const props = v => ({ getProperty: k => v[k] });
-assert.deepStrictEqual(ctx.getAccounts_(props({ QUINYX_API_KEYS: 'NL=abc==\n BE = def \n\n' })),
-  [{ label: 'NL', key: 'abc==' }, { label: 'BE', key: 'def' }]);
-assert.deepStrictEqual(ctx.getAccounts_(props({ QUINYX_API_KEY: 'k' })), [{ label: 'default', key: 'k' }]);
+// placeholders only -> error; legacy single property still works
 assert.throws(() => ctx.getAccounts_(props({})));
-assert.throws(() => ctx.getAccounts_(props({ QUINYX_API_KEYS: 'nolabel' })));
+assert.deepStrictEqual(ctx.getAccounts_(props({ QUINYX_API_KEY: 'k' })), [{ label: 'default', key: 'k' }]);
 console.log('accounts ok');

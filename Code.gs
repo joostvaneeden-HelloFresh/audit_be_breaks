@@ -11,13 +11,11 @@
  *        QUINYX_API_KEY_Namur
  *        QUINYX_API_KEY_Kluisbergen
  *        QUINYX_API_KEY_Houthalen
+ *     (optional) RECIPIENTS = comma-separated emails that get the report, e.g. anna@x.nl, jan@x.be
  *  2. Run runAudit() once manually and click through the authorization.
  *  3. Set the schedule yourself: Triggers (clock icon) > Add Trigger > function runAudit > Time-driven.
  */
 const HUBS = ['Antwerpen', 'Gent', 'Brussel', 'Namur', 'Kluisbergen', 'Houthalen'];
-
-// Optional: emails that should receive the report (comma-separated), e.g. 'a@b.com, c@d.com'. Empty = no email.
-const RECIPIENTS = '';
 
 const CONFIG = {
   ENDPOINT: 'https://api.quinyx.com/FlexForceWebServices.php',
@@ -66,7 +64,7 @@ function runAudit() {
                   (errors.length ? `\n\nFAILED accounts:\n${errors.join('\n')}` : '');
   Logger.log(summary + ' ' + ss.getUrl());
 
-  const recipients = RECIPIENTS || props.getProperty('RECIPIENTS');
+  const recipients = props.getProperty('RECIPIENTS');
   if (recipients) {
     const xlsx = UrlFetchApp.fetch(
       'https://docs.google.com/spreadsheets/d/' + ss.getId() + '/export?format=xlsx',

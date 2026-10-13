@@ -4,7 +4,10 @@
  *  - BLUE: shifts with a break whose total is not 15 minutes (longer or shorter).
  *
  * Setup:
- *  1. Project Settings > Script Properties: set QUINYX_API_KEY.
+ *  1. Project Settings > Script Properties: set QUINYX_API_KEYS, one "label=apiKey" per line, e.g.
+ *       NL=abc123
+ *       BE=def456
+ *     (a single QUINYX_API_KEY is still supported and gets the label "default").
  *  2. (optional) Script Properties: RECIPIENTS (comma-separated emails), FOLDER_ID (Drive folder for the Sheet).
  *  3. Run runAudit() once manually (authorization), then run createWeeklyTrigger() once.
  */
@@ -19,21 +22,32 @@ const CONFIG = {
 };
 
 const COLORS = { missing_break: '#f4c7c3', break_not_expected: '#c9daf8' }; // red, blue
-const COLUMNS = ['issue', 'badgeNo', 'unitName', 'sectionName', 'categoryName',
+const COLUMNS = ['account', 'issue', 'badgeNo', 'unitName', 'sectionName', 'categoryName',
                  'start', 'end', 'gross_hours', 'break_minutes', 'field_hours', 'comment'];
 
 /** Entry point for the weekly trigger. */
 function runAudit() {
   const props = PropertiesService.getScriptProperties();
-  const apiKey = props.getProperty('QUINYX_API_KEY');
-  if (!apiKey) throw new Error('Script Property QUINYX_API_KEY is missing');
+  const accounts = getAccounts_(props);
 
   const today = new Date();
   const from = new Date(today.getTime() - CONFIG.DAYS_BACK * 86400000);
   const toStr = fmtDate_(today), fromStr = fmtDate_(from);
 
-  const items = fetchSchedules_(apiKey, fromStr, toStr);
-  const result = auditItems_(items, CONFIG.MIN_HOURS, CONFIG.EXPECTED_BREAK_MINUTES);
+  // One failing account must not stop the others: collect errors and report them.
+  const result = { rows: [], missing: 0, other: 0, total: 0, skipped: 0 };
+  const errors = [];
+  accounts.forEach(acc => {
+    try {
+      const r = auditItems_(fetchSchedules_(acc.key, fromStr, toStr), CONFIG.MIN_HOURS, CONFIG.EXPECTED_BREAK_MINUTES);
+      r.rows.forEach(row => { row.account = acc.label; result.rows.push(row); });
+      ['missing', 'other', 'total', 'skipped'].forEach(k => { result[k] += r[k]; });
+    } catch (e) {
+      errors.push(`${acc.label}: ${e.message}`);
+      Logger.log(`Account ${acc.label} failed: ${e.message}`);
+    }
+  });
+  result.rows.sort((a, b) => (a.account + a.start + a.badgeNo).localeCompare(b.account + b.start + b.badgeNo));
 
   const ss = SpreadsheetApp.create(`Quinyx break audit ${fromStr} to ${toStr}`);
   writeSheet_(ss.getSheets()[0].setName('Break audit'), result.rows);
@@ -42,7 +56,8 @@ function runAudit() {
 
   const summary = `${result.total} shifts checked (${result.skipped} leave/day-off skipped), ` +
                   `${result.missing} shifts of >= ${CONFIG.MIN_HOURS}h without a break (red), ` +
-                  `${result.other} shifts with a break other than ${CONFIG.EXPECTED_BREAK_MINUTES} min (blue) (${fromStr} to ${toStr}).`;
+                  `${result.other} shifts with a break other than ${CONFIG.EXPECTED_BREAK_MINUTES} min (blue) (${fromStr} to ${toStr}), ${accounts.length} account(s).` +
+                  (errors.length ? `\n\nFAILED accounts:\n${errors.join('\n')}` : '');
   Logger.log(summary + ' ' + ss.getUrl());
 
   const recipients = props.getProperty('RECIPIENTS');
@@ -53,12 +68,27 @@ function runAudit() {
     ).getBlob().setName(`quinyx_break_audit_${fromStr}_${toStr}.xlsx`);
     MailApp.sendEmail({
       to: recipients,
-      subject: `Quinyx break audit ${fromStr} to ${toStr}: ${result.missing} missing break, ${result.other} break != ${CONFIG.EXPECTED_BREAK_MINUTES} min`,
+      subject: `${errors.length ? '[ERRORS] ' : ''}Quinyx break audit ${fromStr} to ${toStr}: ${result.missing} missing break, ${result.other} break != ${CONFIG.EXPECTED_BREAK_MINUTES} min`,
       body: `${summary}\n\nSheet: ${ss.getUrl()}`,
       attachments: [xlsx],
     });
   }
+  if (errors.length === accounts.length) throw new Error('All accounts failed: ' + errors.join(' | '));
   return summary;
+}
+
+/** Reads accounts from QUINYX_API_KEYS ("label=key" per line) or the legacy QUINYX_API_KEY. */
+function getAccounts_(props) {
+  const multi = props.getProperty('QUINYX_API_KEYS');
+  const accounts = (multi || '').split(/[\r\n;]+/).map(l => l.trim()).filter(Boolean).map(l => {
+    const i = l.indexOf('=');
+    if (i < 1) throw new Error('QUINYX_API_KEYS: expected "label=apiKey" per line, got: ' + l.slice(0, 20));
+    return { label: l.slice(0, i).trim(), key: l.slice(i + 1).trim() };
+  });
+  const single = props.getProperty('QUINYX_API_KEY');
+  if (!accounts.length && single) accounts.push({ label: 'default', key: single });
+  if (!accounts.length) throw new Error('Script Property QUINYX_API_KEYS is missing');
+  return accounts;
 }
 
 /** Run once: creates the weekly trigger (first removes existing ones for runAudit). */
@@ -71,11 +101,11 @@ function createWeeklyTrigger() {
     .inTimezone(CONFIG.TIMEZONE).create();
 }
 
-/** Debug: saves the raw response to Drive to check field names. */
+/** Debug: saves the raw response of each account to Drive to check field names. */
 function dumpRaw() {
-  const key = PropertiesService.getScriptProperties().getProperty('QUINYX_API_KEY');
   const d = fmtDate_(new Date());
-  DriveApp.createFile('quinyx_raw.xml', callApi_(key, d, d), 'text/xml');
+  getAccounts_(PropertiesService.getScriptProperties()).forEach(acc =>
+    DriveApp.createFile(`quinyx_raw_${acc.label}.xml`, callApi_(acc.key, d, d), 'text/xml'));
 }
 
 // ---------- API ----------

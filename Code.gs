@@ -12,7 +12,7 @@
  *        QUINYX_API_KEY_Kluisbergen
  *        QUINYX_API_KEY_Houthalen
  *  2. Run runAudit() once manually and click through the authorization.
- *  3. Run createWeeklyTrigger() once. Done: it now runs every Monday.
+ *  3. Set the schedule yourself: Triggers (clock icon) > Add Trigger > function runAudit > Time-driven.
  */
 const HUBS = ['Antwerpen', 'Gent', 'Brussel', 'Namur', 'Kluisbergen', 'Houthalen'];
 
@@ -25,8 +25,6 @@ const CONFIG = {
   MIN_HOURS: 6,          // shift >= MIN_HOURS with 0 minutes of break is flagged red
   DAYS_BACK: 7,          // today and 7 days earlier
   TIMEZONE: 'Europe/Amsterdam',
-  TRIGGER_WEEKDAY: ScriptApp.WeekDay.MONDAY,
-  TRIGGER_HOUR: 7,
 };
 
 const COLORS = { missing_break: '#f4c7c3', break_not_expected: '#c9daf8' }; // red, blue
@@ -94,16 +92,6 @@ function getAccounts_(props) {
   if (missing.length) Logger.log('No API key for: ' + missing.join(', '));
   if (!accounts.length) throw new Error('No API keys found: add Script Properties QUINYX_API_KEY_<hub> (see top of Code.gs)');
   return accounts;
-}
-
-/** Run once: creates the weekly trigger (first removes existing ones for runAudit). */
-function createWeeklyTrigger() {
-  ScriptApp.getProjectTriggers()
-    .filter(t => t.getHandlerFunction() === 'runAudit')
-    .forEach(t => ScriptApp.deleteTrigger(t));
-  ScriptApp.newTrigger('runAudit').timeBased()
-    .onWeekDay(CONFIG.TRIGGER_WEEKDAY).atHour(CONFIG.TRIGGER_HOUR)
-    .inTimezone(CONFIG.TIMEZONE).create();
 }
 
 /** Debug: saves the raw response of each account to Drive to check field names. */

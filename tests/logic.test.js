@@ -1,6 +1,6 @@
 // Draai: node tests/logic.test.js  (test de pure logica uit Code.gs)
 const fs = require('fs'), assert = require('assert');
-const src = fs.readFileSync(__dirname + '/../Code.gs', 'utf8').replace('ScriptApp.WeekDay.MONDAY', '1');
+const src = fs.readFileSync(__dirname + '/../Code.gs', 'utf8');
 global.Logger = { log() {} };
 const ctx = new Function(src + '; return {auditItems_, breakMinutes_, COLUMNS, getAccounts_};')();
 const base = { begDate: '2026-10-10', endDate: '2026-10-10', begBreak: '00:00:00', endBreak: '00:00:00',

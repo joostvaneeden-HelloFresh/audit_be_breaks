@@ -40,10 +40,9 @@ assert.strictEqual(ymd(ctx.periodRange_(new Date(2026, 0, 3)).from), '2025-12-27
 
 // ---- trend rows ----
 const w1 = ctx.weekRow_('2026-11-05', '2026-11-11', 200, 20);
-assert.deepStrictEqual(w1, { week_from: '2026-11-05', week_to: '2026-11-11', shifts_checked: 200, missing_break: 20, missing_pct: 10 });
-assert.strictEqual(ctx.weekRow_('a', 'b', 0, 0).missing_pct, 0);
+assert.deepStrictEqual(w1, { week_from: '2026-11-05', week_to: '2026-11-11', shifts_checked: 200, missing_break: 20 });
 const tot = ctx.totalRow_([w1, ctx.weekRow_('2026-11-05', '2026-11-11', 100, 5)]);
-assert.deepStrictEqual([tot.shifts_checked, tot.missing_break, tot.missing_pct, tot.hubs_included], [300, 25, 8.3, 2]);
+assert.deepStrictEqual([tot.shifts_checked, tot.missing_break, tot.hubs_included], [300, 25, 2]);
 const w2 = ctx.weekRow_('2026-11-12', '2026-11-18', 100, 4);
 const merged = ctx.mergeWeeks_([w2, w1], [ctx.weekRow_('2026-11-05', '2026-11-11', 200, 10)]); // rerun of week 1
 assert.deepStrictEqual(merged.map(r => r.week_from + ':' + r.missing_break), ['2026-11-05:10', '2026-11-12:4']);

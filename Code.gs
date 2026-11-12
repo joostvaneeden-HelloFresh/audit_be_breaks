@@ -6,7 +6,7 @@
  *       BLUE = shift with a break whose total is not 15 minutes (longer or shorter)
  *  2. A fixed trend Sheet (id in Script Property TREND_SHEET_ID; if the property is empty a new Sheet
  *     "Quinyx break audit - missing breaks trend" is created on the first run and its id stored there). Tab "Total" plus one tab per hub; each run adds one row per week
- *     (shifts checked, missing breaks, % missing) and each tab has a chart over time.
+ *     (shifts checked, missing breaks) and each tab has a chart of the missing breaks over time.
  *
  * Setup:
  *  1. Project Settings > Script Properties: add one property per hub, with the hub's API key as value:
@@ -30,7 +30,7 @@ const CONFIG = {
   TIMEZONE: 'Europe/Amsterdam',
 };
 
-const TREND_COLUMNS = ['week_from', 'week_to', 'shifts_checked', 'missing_break', 'missing_pct'];
+const TREND_COLUMNS = ['week_from', 'week_to', 'shifts_checked', 'missing_break'];
 const COLORS = { missing_break: '#f4c7c3', break_not_expected: '#c9daf8' }; // red, blue
 const COLUMNS = ['account', 'issue', 'badgeNo', 'unitName', 'sectionName', 'categoryName',
                  'start', 'end', 'gross_hours', 'break_minutes', 'field_hours', 'comment'];
@@ -120,8 +120,7 @@ function periodRange_(today) {
 // ---------- Trend sheet (missing breaks per week) ----------
 
 function weekRow_(weekFrom, weekTo, checked, missing) {
-  return { week_from: weekFrom, week_to: weekTo, shifts_checked: checked, missing_break: missing,
-           missing_pct: checked ? Math.round(missing / checked * 1000) / 10 : 0 };
+  return { week_from: weekFrom, week_to: weekTo, shifts_checked: checked, missing_break: missing };
 }
 
 /** Sum of the hub rows of one week (hubs whose API call failed are simply not included). */
@@ -178,8 +177,11 @@ function updateTrend_(props, perHub) {
 function updateTrendTab_(sheet, columns, newRow) {
   let existing = [];
   if (sheet.getLastRow() > 1) {
-    existing = sheet.getRange(2, 1, sheet.getLastRow() - 1, columns.length).getValues().map(v => {
-      const o = {}; columns.forEach((c, i) => { o[c] = v[i]; }); return o;
+    // read by header name, so older layouts (e.g. with a missing_pct column) still load correctly
+    const values = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
+    const header = values[0];
+    existing = values.slice(1).map(v => {
+      const o = {}; columns.forEach(c => { const i = header.indexOf(c); o[c] = i < 0 ? '' : v[i]; }); return o;
     });
   }
   const rows = newRow ? mergeWeeks_(existing, [newRow]) : existing;
@@ -192,13 +194,13 @@ function updateTrendTab_(sheet, columns, newRow) {
   sheet.setFrozenRows(1);
   sheet.autoResizeColumns(1, columns.length);
   if (!rows.length) return;
-  sheet.insertChart(sheet.newChart().asLineChart()
+  sheet.insertChart(sheet.newChart().asColumnChart()
     .addRange(sheet.getRange(1, 1, rows.length + 1, 1))   // week_from (x axis)
-    .addRange(sheet.getRange(1, 5, rows.length + 1, 1))   // missing_pct
+    .addRange(sheet.getRange(1, 4, rows.length + 1, 1))   // missing_break
     .setNumHeaders(1)
-    .setOption('title', sheet.getName() + ': shifts of 6h+ without a break (% of shifts checked)')
+    .setOption('title', sheet.getName() + ': shifts of 6h+ without a break (number per week)')
     .setOption('legend', { position: 'none' })
-    .setOption('vAxis', { title: '% missing break', minValue: 0 })
+    .setOption('vAxis', { title: 'Shifts without a break', minValue: 0, format: '0' })
     .setOption('hAxis', { title: 'Week starting' })
     .setOption('width', 640).setOption('height', 320)
     .setPosition(2, columns.length + 2, 0, 0).build());

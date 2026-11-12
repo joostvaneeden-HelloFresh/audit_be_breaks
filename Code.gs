@@ -1,7 +1,12 @@
 /**
- * Audit of Quinyx shifts. Produces one Google Sheet with a single colour-coded overview:
- *  - RED:  shifts of 6 hours or longer without a break (missing break).
- *  - BLUE: shifts with a break whose total is not 15 minutes (longer or shorter).
+ * Audit of Quinyx shifts. Every run covers the last 7 full days (8 days ago up to yesterday, no overlap).
+ * It produces:
+ *  1. A new Google Sheet with a single colour-coded overview of that week:
+ *       RED  = shift of 6 hours or longer without a break (missing break)
+ *       BLUE = shift with a break whose total is not 15 minutes (longer or shorter)
+ *  2. A fixed trend Sheet "Quinyx break audit - missing breaks trend" (created on the first run, id stored in
+ *     Script Property TREND_SHEET_ID). Tab "Total" plus one tab per hub; each run adds one row per week
+ *     (shifts checked, missing breaks, % missing) and each tab has a chart over time.
  *
  * Setup:
  *  1. Project Settings > Script Properties: add one property per hub, with the hub's API key as value:
@@ -11,6 +16,7 @@
  *        QUINYX_API_KEY_Namur
  *        QUINYX_API_KEY_Kluisbergen
  *        QUINYX_API_KEY_Houthalen
+ *     (optional) FOLDER_ID = Drive folder where the trend Sheet is created
  *     (optional) RECIPIENTS = comma-separated emails that get the report, e.g. anna@x.nl, jan@x.be
  *  2. Run runAudit() once manually and click through the authorization.
  *  3. Set the schedule yourself: Triggers (clock icon) > Add Trigger > function runAudit > Time-driven.
@@ -21,10 +27,10 @@ const CONFIG = {
   ENDPOINT: 'https://api.quinyx.com/FlexForceWebServices.php',
   EXPECTED_BREAK_MINUTES: 15, // a break (> 0) that differs from this is flagged blue
   MIN_HOURS: 6,          // shift >= MIN_HOURS with 0 minutes of break is flagged red
-  DAYS_BACK: 7,          // today and 7 days earlier
   TIMEZONE: 'Europe/Amsterdam',
 };
 
+const TREND_COLUMNS = ['week_from', 'week_to', 'shifts_checked', 'missing_break', 'missing_pct'];
 const COLORS = { missing_break: '#f4c7c3', break_not_expected: '#c9daf8' }; // red, blue
 const COLUMNS = ['account', 'issue', 'badgeNo', 'unitName', 'sectionName', 'categoryName',
                  'start', 'end', 'gross_hours', 'break_minutes', 'field_hours', 'comment'];
@@ -34,18 +40,18 @@ function runAudit() {
   const props = PropertiesService.getScriptProperties();
   const accounts = getAccounts_(props);
 
-  const today = new Date();
-  const from = new Date(today.getTime() - CONFIG.DAYS_BACK * 86400000);
-  const toStr = fmtDate_(today), fromStr = fmtDate_(from);
+  const period = periodRange_(new Date());
+  const fromStr = fmtDate_(period.from), toStr = fmtDate_(period.to);
 
   // One failing account must not stop the others: collect errors and report them.
   const result = { rows: [], missing: 0, other: 0, total: 0, skipped: 0 };
-  const errors = [];
+  const errors = [], perHub = [];
   accounts.forEach(acc => {
     try {
       const r = auditItems_(fetchSchedules_(acc.key, fromStr, toStr), CONFIG.MIN_HOURS, CONFIG.EXPECTED_BREAK_MINUTES);
       r.rows.forEach(row => { row.account = acc.label; result.rows.push(row); });
       ['missing', 'other', 'total', 'skipped'].forEach(k => { result[k] += r[k]; });
+      perHub.push({ hub: acc.label, row: weekRow_(fromStr, toStr, r.total - r.skipped, r.missing) });
     } catch (e) {
       errors.push(`${acc.label}: ${e.message}`);
       Logger.log(`Account ${acc.label} failed: ${e.message}`);
@@ -64,6 +70,16 @@ function runAudit() {
                   (errors.length ? `\n\nFAILED accounts:\n${errors.join('\n')}` : '');
   Logger.log(summary + ' ' + ss.getUrl());
 
+  // Trend sheet: a failure here must not stop the mail below.
+  let trendUrl = '', trendError = '';
+  try {
+    trendUrl = updateTrend_(props, perHub);
+  } catch (e) {
+    trendError = e.message;
+    errors.push('Trend sheet: ' + e.message);
+    Logger.log('Trend sheet failed: ' + e.message);
+  }
+
   const recipients = props.getProperty('RECIPIENTS');
   if (recipients) {
     const xlsx = UrlFetchApp.fetch(
@@ -73,11 +89,12 @@ function runAudit() {
     MailApp.sendEmail({
       to: recipients,
       subject: `${errors.length ? '[ERRORS] ' : ''}Quinyx break audit ${fromStr} to ${toStr}: ${result.missing} missing break, ${result.other} break != ${CONFIG.EXPECTED_BREAK_MINUTES} min`,
-      body: `${summary}\n\nSheet: ${ss.getUrl()}`,
+      body: `${summary}\n\nSheet: ${ss.getUrl()}` + (trendUrl ? `\nTrend (missing breaks over time): ${trendUrl}` : '') +
+              (trendError ? `\n\nTrend sheet NOT updated: ${trendError}` : ''),
       attachments: [xlsx],
     });
   }
-  if (errors.length === accounts.length) throw new Error('All accounts failed: ' + errors.join(' | '));
+  if (errors.filter(e => e.indexOf('Trend sheet') !== 0).length === accounts.length) throw new Error('All accounts failed: ' + errors.join(' | '));
   return summary;
 }
 
@@ -90,6 +107,94 @@ function getAccounts_(props) {
   if (missing.length) Logger.log('No API key for: ' + missing.join(', '));
   if (!accounts.length) throw new Error('No API keys found: add Script Properties QUINYX_API_KEY_<hub> (see top of Code.gs)');
   return accounts;
+}
+
+/** The last 7 full days: from = 7 days ago, to = yesterday (both inclusive). Weekly runs never overlap. */
+function periodRange_(today) {
+  const from = new Date(today), to = new Date(today);
+  from.setDate(from.getDate() - 7);
+  to.setDate(to.getDate() - 1);
+  return { from, to };
+}
+
+// ---------- Trend sheet (missing breaks per week) ----------
+
+function weekRow_(weekFrom, weekTo, checked, missing) {
+  return { week_from: weekFrom, week_to: weekTo, shifts_checked: checked, missing_break: missing,
+           missing_pct: checked ? Math.round(missing / checked * 1000) / 10 : 0 };
+}
+
+/** Sum of the hub rows of one week (hubs whose API call failed are simply not included). */
+function totalRow_(hubRows) {
+  const first = hubRows[0];
+  const row = weekRow_(first.week_from, first.week_to,
+    hubRows.reduce((a, r) => a + r.shifts_checked, 0), hubRows.reduce((a, r) => a + r.missing_break, 0));
+  row.hubs_included = hubRows.length;
+  return row;
+}
+
+/** Existing rows + new rows; a rerun for the same week replaces that week's row. Sorted by week. */
+function mergeWeeks_(existing, added) {
+  const weeks = {};
+  added.forEach(r => { weeks[r.week_from] = true; });
+  return existing.filter(r => !weeks[r.week_from]).concat(added)
+    .sort((a, b) => String(a.week_from).localeCompare(String(b.week_from)));
+}
+
+/** Opens the fixed trend Sheet (id in Script Property TREND_SHEET_ID) or creates it on the first run. */
+function getTrendSpreadsheet_(props) {
+  const id = props.getProperty('TREND_SHEET_ID');
+  if (id) return SpreadsheetApp.openById(id); // if it was deleted this fails loudly instead of silently starting over
+  const ss = SpreadsheetApp.create('Quinyx break audit - missing breaks trend');
+  props.setProperty('TREND_SHEET_ID', ss.getId());
+  const folderId = props.getProperty('FOLDER_ID');
+  if (folderId) DriveApp.getFileById(ss.getId()).moveTo(DriveApp.getFolderById(folderId));
+  ss.getSheets()[0].setName('Total');
+  return ss;
+}
+
+/** Adds this week's rows to tab "Total" and one tab per hub. Returns the Sheet URL. */
+function updateTrend_(props, perHub) {
+  if (!perHub.length) return '';
+  const ss = getTrendSpreadsheet_(props);
+  const total = totalRow_(perHub.map(p => p.row));
+  updateTrendTab_(ss.getSheetByName('Total') || ss.insertSheet('Total', 0), TREND_COLUMNS.concat(['hubs_included']), total);
+  HUBS.forEach(hub => {
+    const sheet = ss.getSheetByName(hub) || ss.insertSheet(hub);
+    const p = perHub.filter(x => x.hub === hub)[0];
+    updateTrendTab_(sheet, TREND_COLUMNS, p ? p.row : null); // no row this week if the hub's API call failed
+  });
+  return ss.getUrl();
+}
+
+/** Merges newRow into the tab's existing rows, rewrites the tab and redraws its chart (missing_pct over time). */
+function updateTrendTab_(sheet, columns, newRow) {
+  let existing = [];
+  if (sheet.getLastRow() > 1) {
+    existing = sheet.getRange(2, 1, sheet.getLastRow() - 1, columns.length).getValues().map(v => {
+      const o = {}; columns.forEach((c, i) => { o[c] = v[i]; }); return o;
+    });
+  }
+  const rows = newRow ? mergeWeeks_(existing, [newRow]) : existing;
+  sheet.getCharts().forEach(c => sheet.removeChart(c));
+  sheet.clear();
+  sheet.getRange(1, 1, rows.length + 1, 2).setNumberFormat('@'); // dates stay text
+  sheet.getRange(1, 1, rows.length + 1, columns.length)
+    .setValues([columns].concat(rows.map(r => columns.map(c => r[c]))));
+  sheet.getRange(1, 1, 1, columns.length).setFontWeight('bold').setBackground('#d9d9d9');
+  sheet.setFrozenRows(1);
+  sheet.autoResizeColumns(1, columns.length);
+  if (!rows.length) return;
+  sheet.insertChart(sheet.newChart().asLineChart()
+    .addRange(sheet.getRange(1, 1, rows.length + 1, 1))   // week_from (x axis)
+    .addRange(sheet.getRange(1, 5, rows.length + 1, 1))   // missing_pct
+    .setNumHeaders(1)
+    .setOption('title', sheet.getName() + ': shifts of 6h+ without a break (% of shifts checked)')
+    .setOption('legend', { position: 'none' })
+    .setOption('vAxis', { title: '% missing break', minValue: 0 })
+    .setOption('hAxis', { title: 'Week starting' })
+    .setOption('width', 640).setOption('height', 320)
+    .setPosition(2, columns.length + 2, 0, 0).build());
 }
 
 /** Debug: saves the raw response of each account to Drive to check field names. */

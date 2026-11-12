@@ -4,8 +4,8 @@
  *  1. A new Google Sheet with a single colour-coded overview of that week:
  *       RED  = shift of 6 hours or longer without a break (missing break)
  *       BLUE = shift with a break whose total is not 15 minutes (longer or shorter)
- *  2. A fixed trend Sheet "Quinyx break audit - missing breaks trend" (created on the first run, id stored in
- *     Script Property TREND_SHEET_ID). Tab "Total" plus one tab per hub; each run adds one row per week
+ *  2. A fixed trend Sheet (id in Script Property TREND_SHEET_ID; if the property is empty a new Sheet
+ *     "Quinyx break audit - missing breaks trend" is created on the first run and its id stored there). Tab "Total" plus one tab per hub; each run adds one row per week
  *     (shifts checked, missing breaks, % missing) and each tab has a chart over time.
  *
  * Setup:
@@ -158,7 +158,14 @@ function updateTrend_(props, perHub) {
   if (!perHub.length) return '';
   const ss = getTrendSpreadsheet_(props);
   const total = totalRow_(perHub.map(p => p.row));
-  updateTrendTab_(ss.getSheetByName('Total') || ss.insertSheet('Total', 0), TREND_COLUMNS.concat(['hubs_included']), total);
+  let totalSheet = ss.getSheetByName('Total');
+  if (!totalSheet) {
+    // Use the empty default tab of a fresh Sheet as "Total" instead of leaving it behind empty.
+    const first = ss.getSheets()[0];
+    const isEmptyDefault = first.getLastRow() === 0 && first.getLastColumn() === 0;
+    totalSheet = isEmptyDefault ? first.setName('Total') : ss.insertSheet('Total', 0);
+  }
+  updateTrendTab_(totalSheet, TREND_COLUMNS.concat(['hubs_included']), total);
   HUBS.forEach(hub => {
     const sheet = ss.getSheetByName(hub) || ss.insertSheet(hub);
     const p = perHub.filter(x => x.hub === hub)[0];

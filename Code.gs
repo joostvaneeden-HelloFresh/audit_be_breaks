@@ -173,7 +173,7 @@ function updateTrend_(props, perHub) {
   return ss.getUrl();
 }
 
-/** Merges newRow into the tab's existing rows, rewrites the tab and redraws its chart (missing_pct over time). */
+/** Merges newRow into the tab's existing rows, rewrites the tab and redraws its chart (missing_break per week). */
 function updateTrendTab_(sheet, columns, newRow) {
   let existing = [];
   if (sheet.getLastRow() > 1) {

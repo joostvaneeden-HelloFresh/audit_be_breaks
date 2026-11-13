@@ -1,5 +1,6 @@
 /**
  * Audit of Quinyx shifts. Every run covers the last 7 full days (8 days ago up to yesterday, no overlap).
+ * Weeks run Saturday to Friday, so schedule the weekly trigger on Saturday.
  * It produces:
  *  1. A new Google Sheet with a single colour-coded overview of that week:
  *       RED  = shift of 6 hours or longer without a break (missing break)
@@ -28,6 +29,7 @@ const CONFIG = {
   EXPECTED_BREAK_MINUTES: 15, // a break (> 0) that differs from this is flagged blue
   MIN_HOURS: 6,          // shift >= MIN_HOURS with 0 minutes of break is flagged red
   TIMEZONE: 'Europe/Amsterdam',
+  BACKFILL_START: '2026-10-01', // go-live date; backfillTrend() fills the trend Sheet from here
 };
 
 const TREND_COLUMNS = ['week_from', 'week_to', 'shifts_checked', 'missing_break'];
@@ -132,12 +134,27 @@ function totalRow_(hubRows) {
   return row;
 }
 
-/** Existing rows + new rows; a rerun for the same week replaces that week's row. Sorted by week. */
+/** Existing rows + new rows. Existing rows whose period overlaps a new row are replaced (reruns, backfill). Sorted by week. */
 function mergeWeeks_(existing, added) {
-  const weeks = {};
-  added.forEach(r => { weeks[r.week_from] = true; });
-  return existing.filter(r => !weeks[r.week_from]).concat(added)
+  const overlaps = r => added.some(a => String(r.week_from) <= String(a.week_to) && String(a.week_from) <= String(r.week_to));
+  return existing.filter(r => !overlaps(r)).concat(added)
     .sort((a, b) => String(a.week_from).localeCompare(String(b.week_from)));
+}
+
+/** Weekly periods from startStr: first period runs up to the first Friday, then Saturday-Friday weeks; only complete weeks (ending on or before yesterday). */
+function backfillPeriods_(startStr, todayStr) {
+  const day = 86400000, iso = ms => new Date(ms).toISOString().slice(0, 10);
+  const start = Date.parse(startStr + 'T00:00:00Z'), yesterday = Date.parse(todayStr + 'T00:00:00Z') - day;
+  let end = start;
+  while (new Date(end).getUTCDay() !== 5) end += day; // first Friday on/after start
+  const periods = [];
+  let from = start;
+  while (end <= yesterday) {
+    periods.push({ from: iso(from), to: iso(end) });
+    from = end + day;
+    end = from + 6 * day;
+  }
+  return periods;
 }
 
 /** Opens the fixed trend Sheet (id in Script Property TREND_SHEET_ID) or creates it on the first run. */
@@ -152,11 +169,13 @@ function getTrendSpreadsheet_(props) {
   return ss;
 }
 
-/** Adds this week's rows to tab "Total" and one tab per hub. Returns the Sheet URL. */
-function updateTrend_(props, perHub) {
-  if (!perHub.length) return '';
+/** Adds rows ({hub, row} entries, any number of weeks) to tab "Total" and one tab per hub. Returns the Sheet URL. */
+function updateTrend_(props, entries) {
+  if (!entries.length) return '';
   const ss = getTrendSpreadsheet_(props);
-  const total = totalRow_(perHub.map(p => p.row));
+  const byWeek = {};
+  entries.forEach(e => { (byWeek[e.row.week_from] = byWeek[e.row.week_from] || []).push(e.row); });
+  const totals = Object.keys(byWeek).map(w => totalRow_(byWeek[w]));
   let totalSheet = ss.getSheetByName('Total');
   if (!totalSheet) {
     // Use the empty default tab of a fresh Sheet as "Total" instead of leaving it behind empty.
@@ -164,17 +183,47 @@ function updateTrend_(props, perHub) {
     const isEmptyDefault = first.getLastRow() === 0 && first.getLastColumn() === 0;
     totalSheet = isEmptyDefault ? first.setName('Total') : ss.insertSheet('Total', 0);
   }
-  updateTrendTab_(totalSheet, TREND_COLUMNS.concat(['hubs_included']), total);
+  updateTrendTab_(totalSheet, TREND_COLUMNS.concat(['hubs_included']), totals);
   HUBS.forEach(hub => {
     const sheet = ss.getSheetByName(hub) || ss.insertSheet(hub);
-    const p = perHub.filter(x => x.hub === hub)[0];
-    updateTrendTab_(sheet, TREND_COLUMNS, p ? p.row : null); // no row this week if the hub's API call failed
+    updateTrendTab_(sheet, TREND_COLUMNS, entries.filter(e => e.hub === hub).map(e => e.row)); // no row if the hub's API call failed
   });
   return ss.getUrl();
 }
 
-/** Merges newRow into the tab's existing rows, rewrites the tab and redraws its chart (missing_break per week). */
-function updateTrendTab_(sheet, columns, newRow) {
+/** ONE-TIME: fills the trend Sheet from CONFIG.BACKFILL_START up to the last complete Saturday-Friday week. */
+function backfillTrend() {
+  const props = PropertiesService.getScriptProperties();
+  const accounts = getAccounts_(props);
+  const periods = backfillPeriods_(CONFIG.BACKFILL_START, fmtDate_(new Date()));
+  if (!periods.length) return 'Nothing to backfill yet';
+  const first = periods[0].from, last = periods[periods.length - 1].to;
+
+  // One API call per hub for the whole range, then split the shifts into weeks by start date.
+  const entries = [], errors = [];
+  accounts.forEach(acc => {
+    try {
+      const items = fetchSchedules_(acc.key, first, last);
+      periods.forEach(p => {
+        const inWeek = items.filter(f => f.begDate >= p.from && f.begDate <= p.to);
+        const r = auditItems_(inWeek, CONFIG.MIN_HOURS, CONFIG.EXPECTED_BREAK_MINUTES);
+        entries.push({ hub: acc.label, row: weekRow_(p.from, p.to, r.total - r.skipped, r.missing) });
+      });
+    } catch (e) {
+      errors.push(`${acc.label}: ${e.message}`);
+      Logger.log(`Backfill: ${acc.label} failed: ${e.message}`);
+    }
+  });
+  const url = updateTrend_(props, entries);
+  const summary = `Backfilled ${periods.length} weeks (${first} to ${last}) for ${accounts.length - errors.length}/${accounts.length} hubs. ${url}` +
+                  (errors.length ? `\nFAILED: ${errors.join(' | ')}` : '');
+  Logger.log(summary);
+  if (errors.length === accounts.length) throw new Error(summary);
+  return summary;
+}
+
+/** Merges newRows into the tab's existing rows, rewrites the tab and redraws its chart (missing_break per week). */
+function updateTrendTab_(sheet, columns, newRows) {
   let existing = [];
   if (sheet.getLastRow() > 1) {
     // read by header name, so older layouts (e.g. with a missing_pct column) still load correctly
@@ -184,7 +233,7 @@ function updateTrendTab_(sheet, columns, newRow) {
       const o = {}; columns.forEach(c => { const i = header.indexOf(c); o[c] = i < 0 ? '' : v[i]; }); return o;
     });
   }
-  const rows = newRow ? mergeWeeks_(existing, [newRow]) : existing;
+  const rows = newRows.length ? mergeWeeks_(existing, newRows) : existing;
   sheet.getCharts().forEach(c => sheet.removeChart(c));
   sheet.clear();
   sheet.getRange(1, 1, rows.length + 1, 2).setNumberFormat('@'); // dates stay text

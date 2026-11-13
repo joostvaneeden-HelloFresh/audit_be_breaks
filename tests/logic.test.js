@@ -2,7 +2,7 @@
 const fs = require('fs'), assert = require('assert');
 const src = fs.readFileSync(__dirname + '/../Code.gs', 'utf8');
 global.Logger = { log() {} };
-const ctx = new Function(src + '; return {auditItems_, breakMinutes_, COLUMNS, getAccounts_, periodRange_, weekRow_, totalRow_, mergeWeeks_};')();
+const ctx = new Function(src + '; return {auditItems_, breakMinutes_, COLUMNS, getAccounts_, backfillPeriods_, periodRange_, weekRow_, totalRow_, mergeWeeks_};')();
 const base = { begDate: '2026-10-10', endDate: '2026-10-10', begBreak: '00:00:00', endBreak: '00:00:00',
   leaveReasonId: '0', productiveTime: 'true', isFreeDay: 'false', approvedLeave: 'false' };
 const it = (o) => Object.assign({}, base, o);
@@ -46,4 +46,18 @@ assert.deepStrictEqual([tot.shifts_checked, tot.missing_break, tot.hubs_included
 const w2 = ctx.weekRow_('2026-11-12', '2026-11-18', 100, 4);
 const merged = ctx.mergeWeeks_([w2, w1], [ctx.weekRow_('2026-11-05', '2026-11-11', 200, 10)]); // rerun of week 1
 assert.deepStrictEqual(merged.map(r => r.week_from + ':' + r.missing_break), ['2026-11-05:10', '2026-11-12:4']);
+// overlapping period (e.g. an old test row Thu-Wed vs. new Sat-Fri week) is replaced, not duplicated
+const ov = ctx.mergeWeeks_([w1], [ctx.weekRow_('2026-10-31', '2026-11-06', 50, 7)]);
+assert.deepStrictEqual(ov.map(r => r.week_from + '..' + r.week_to), ['2026-10-31..2026-11-06']);
+// adjacent weeks do not overlap
+assert.strictEqual(ctx.mergeWeeks_([ctx.weekRow_('2026-10-24', '2026-10-30', 1, 1)], [ctx.weekRow_('2026-10-31', '2026-11-06', 1, 1)]).length, 2);
 console.log('trend ok');
+
+// ---- backfill periods: go-live Thu 1 Oct 2026, first period to Friday, then Saturday-Friday weeks ----
+const bp = ctx.backfillPeriods_('2026-10-01', '2026-11-13'); // today = Fri 13 Nov: that week is not finished yet
+assert.deepStrictEqual(bp.map(p => p.from + '..' + p.to), [
+  '2026-10-01..2026-10-02', '2026-10-03..2026-10-09', '2026-10-10..2026-10-16',
+  '2026-10-17..2026-10-23', '2026-10-24..2026-10-30', '2026-10-31..2026-11-06']);
+assert.strictEqual(ctx.backfillPeriods_('2026-10-01', '2026-11-14').length, 7); // Saturday: week 7-13 Nov is complete
+assert.strictEqual(ctx.backfillPeriods_('2026-10-01', '2026-10-02').length, 0); // Friday is not over yet
+console.log('backfill ok');

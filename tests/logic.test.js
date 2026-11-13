@@ -30,13 +30,15 @@ assert.deepStrictEqual(ctx.getAccounts_(props({ QUINYX_API_KEY_Gent: ' b ', QUIN
 assert.throws(() => ctx.getAccounts_(props({})));
 console.log('accounts ok');
 
-// ---- period: last 7 full days, no overlap between weekly runs ----
+// ---- period: the Saturday-Friday week ending on the most recent Friday (today included) ----
 const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-const pr = ctx.periodRange_(new Date(2026, 10, 12)); // Thu 12 Nov 2026
-assert.deepStrictEqual([ymd(pr.from), ymd(pr.to)], ['2026-11-05', '2026-11-11']);
-const pr2 = ctx.periodRange_(new Date(2026, 10, 19)); // a week later
-assert.strictEqual(ymd(pr2.from), '2026-11-12'); // starts the day after the previous period ended -> no overlap, no gap
-assert.strictEqual(ymd(ctx.periodRange_(new Date(2026, 0, 3)).from), '2025-12-27'); // year boundary
+const per = (y, m, d) => { const r = ctx.periodRange_(new Date(y, m - 1, d)); return ymd(r.from) + '..' + ymd(r.to); };
+assert.strictEqual(per(2026, 11, 13), '2026-11-07..2026-11-13'); // Friday run: this week, Saturday through today
+assert.strictEqual(per(2026, 11, 14), '2026-11-07..2026-11-13'); // Saturday: still that week
+assert.strictEqual(per(2026, 11, 16), '2026-11-07..2026-11-13'); // Monday: the week that just ended
+assert.strictEqual(per(2026, 11, 20), '2026-11-14..2026-11-20'); // next Friday: starts the day after, no overlap, no gap
+assert.strictEqual(per(2026, 11, 12), '2026-10-31..2026-11-06'); // Thursday: previous finished week
+assert.strictEqual(per(2027, 1, 1), '2026-12-26..2027-01-01'); // 1 Jan 2027 is a Friday: year boundary
 
 // ---- trend rows ----
 const w1 = ctx.weekRow_('2026-11-05', '2026-11-11', 200, 20);
@@ -54,10 +56,12 @@ assert.strictEqual(ctx.mergeWeeks_([ctx.weekRow_('2026-10-24', '2026-10-30', 1, 
 console.log('trend ok');
 
 // ---- backfill periods: go-live Thu 1 Oct 2026, first period to Friday, then Saturday-Friday weeks ----
-const bp = ctx.backfillPeriods_('2026-10-01', '2026-11-13'); // today = Fri 13 Nov: that week is not finished yet
+const bp = ctx.backfillPeriods_('2026-10-01', '2026-11-13'); // today = Friday: that week is included
 assert.deepStrictEqual(bp.map(p => p.from + '..' + p.to), [
   '2026-10-01..2026-10-02', '2026-10-03..2026-10-09', '2026-10-10..2026-10-16',
-  '2026-10-17..2026-10-23', '2026-10-24..2026-10-30', '2026-10-31..2026-11-06']);
-assert.strictEqual(ctx.backfillPeriods_('2026-10-01', '2026-11-14').length, 7); // Saturday: week 7-13 Nov is complete
-assert.strictEqual(ctx.backfillPeriods_('2026-10-01', '2026-10-02').length, 0); // Friday is not over yet
+  '2026-10-17..2026-10-23', '2026-10-24..2026-10-30', '2026-10-31..2026-11-06', '2026-11-07..2026-11-13']);
+assert.strictEqual(ctx.backfillPeriods_('2026-10-01', '2026-11-12').length, 6); // Thursday: week of 7-13 Nov not yet
+assert.strictEqual(ctx.backfillPeriods_('2026-10-01', '2026-10-01').length, 0); // before the first Friday
+// the backfill and the weekly run agree on what the latest week is
+assert.strictEqual(per(2026, 11, 13), bp[bp.length - 1].from + '..' + bp[bp.length - 1].to);
 console.log('backfill ok');

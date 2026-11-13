@@ -1,6 +1,7 @@
 /**
- * Audit of Quinyx shifts. Every run covers the last 7 full days (8 days ago up to yesterday, no overlap).
- * Weeks run Saturday to Friday, so schedule the weekly trigger on Saturday.
+ * Audit of Quinyx shifts. Weeks run Saturday to Friday. Every run covers the week that ends on the most recent
+ * Friday (today if you run on Friday), so a Friday-morning trigger audits the week Saturday up to and including that
+ * Friday. Weekly runs never overlap.
  * It produces:
  *  1. A new Google Sheet with a single colour-coded overview of that week:
  *       RED  = shift of 6 hours or longer without a break (missing break)
@@ -111,11 +112,12 @@ function getAccounts_(props) {
   return accounts;
 }
 
-/** The last 7 full days: from = 7 days ago, to = yesterday (both inclusive). Weekly runs never overlap. */
+/** The Saturday-Friday week that ends on the most recent Friday (today if today is Friday). */
 function periodRange_(today) {
-  const from = new Date(today), to = new Date(today);
-  from.setDate(from.getDate() - 7);
-  to.setDate(to.getDate() - 1);
+  const to = new Date(today);
+  while (to.getDay() !== 5) to.setDate(to.getDate() - 1);
+  const from = new Date(to);
+  from.setDate(from.getDate() - 6);
   return { from, to };
 }
 
@@ -141,15 +143,15 @@ function mergeWeeks_(existing, added) {
     .sort((a, b) => String(a.week_from).localeCompare(String(b.week_from)));
 }
 
-/** Weekly periods from startStr: first period runs up to the first Friday, then Saturday-Friday weeks; only complete weeks (ending on or before yesterday). */
+/** Weekly periods from startStr: first period runs up to the first Friday, then Saturday-Friday weeks, up to the most recent Friday (today included). */
 function backfillPeriods_(startStr, todayStr) {
   const day = 86400000, iso = ms => new Date(ms).toISOString().slice(0, 10);
-  const start = Date.parse(startStr + 'T00:00:00Z'), yesterday = Date.parse(todayStr + 'T00:00:00Z') - day;
+  const start = Date.parse(startStr + 'T00:00:00Z'), today = Date.parse(todayStr + 'T00:00:00Z');
   let end = start;
   while (new Date(end).getUTCDay() !== 5) end += day; // first Friday on/after start
   const periods = [];
   let from = start;
-  while (end <= yesterday) {
+  while (end <= today) {
     periods.push({ from: iso(from), to: iso(end) });
     from = end + day;
     end = from + 6 * day;
@@ -191,7 +193,7 @@ function updateTrend_(props, entries) {
   return ss.getUrl();
 }
 
-/** ONE-TIME: fills the trend Sheet from CONFIG.BACKFILL_START up to the last complete Saturday-Friday week. */
+/** ONE-TIME: fills the trend Sheet from CONFIG.BACKFILL_START up to the most recent Friday. */
 function backfillTrend() {
   const props = PropertiesService.getScriptProperties();
   const accounts = getAccounts_(props);
